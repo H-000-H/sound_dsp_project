@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(cat)",
+      "Bash(python /tmp/convert_img.py)",
+      "Bash(rm -f /tmp/convert_img.py)",
+      "Bash(powershell.exe -Command \"& { Set-Location 'D:\\\\ESP32_PROJECT\\\\sound_dsp_project\\\\build'; ninja -j4 2>&1 }\")",
+      "Bash(/c/Users/18514/esp/v5.5.2/esp-idf/tools/idf_size.py)",
+      "Bash(python -c \"import click\")",
+      "Read(//c/Users/18514/.espressif/**)",
+      "Bash(pip install *)",
+      "Read(//d/Espressif_vscode/frameworks/esp-idf-v5.5.2/tools/**)",
+      "Read(//d/Espressif_vscode/python_env/**)",
+      "Bash(cat /c/Users/18514/esp/v5.5.2/esp-idf/export.sh | head -30)",
+      "Read(//c/Users/18514/esp/v5.5.2/esp-idf/**)",
+      "Bash(python \"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/idf.py\" --version)",
+      "Bash(export IDF_PATH=/c/Users/18514/esp/v5.5.2/esp-idf)",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" /c/Users/18514/esp/v5.5.2/esp-idf/tools/idf.py --version)",
+      "Bash(rm -f sdkconfig sdkconfig.old)",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" /c/Users/18514/esp/v5.5.2/esp-idf/tools/idf.py build)",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" -m pip install packaging)",
+      "Bash(cmd.exe /c \"cd /d D:\\\\ESP32_PROJECT\\\\sound_dsp_project && C:\\\\Users\\\\18514\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat > nul 2>&1 && idf.py build\")",
+      "Bash(cmd.exe /c \"cd /d D:\\\\ESP32_PROJECT\\\\sound_dsp_project && C:\\\\Users\\\\18514\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat > nul 2>&1 && idf.py build > build_log.txt 2>&1\")",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" -m pip install \"pyparsing>=3.1.0,<3.3\" \"click>=7.0,<8.2\" \"cryptography>=2.1.4,<45\" \"esptool>=4.11.dev2,<5\" \"idf-component-manager>=2.2,<3\")",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" -m pip install -r /c/Users/18514/esp/v5.5.2/esp-idf/tools/requirements/requirements.core.txt)",
+      "Bash(unset MSYSTEM)",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" -m pip install \"esp-idf-kconfig>=2.0.2,<3.0.0\" \"esp-idf-size>=1.4.0,<2.0.0\" \"esp-idf-nvs-partition-gen~=0.1.9\" -c /d/Espressif_vscode/espidf.constraints.v5.5.txt)",
+      "Bash(\"/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe\" -c \"import idf_tools; tools = idf_tools.get_all_tools\\(\\); [print\\(t['name']\\) for t in tools]\")",
+      "Read(//c/Users/18514/**)",
+      "Bash(/d/Espressif_vscode/python_env/idf5.5_py3.13_env/Scripts/python.exe -c ' *)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}

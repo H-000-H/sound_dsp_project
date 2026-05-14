@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"/d/Espressif_vscode/python_env/idf5.5_py3.11_env/Scripts/\" 2>/dev/null)",
+      "Read(//d/Espressif_vscode/python_env/idf5.5_py3.11_env/Scripts//**)",
+      "Bash(cmd.exe /c \"C:\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat\")",
+      "Bash(cd /d \"D:\\\\ESP32_PROJECT\\\\sound_dsp_project\")",
+      "Bash(idf.py build *)",
+      "Bash(cmd.exe /c \"C:\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat >nul 2>&1 && idf.py build\")",
+      "Bash(cmd.exe /c \"C:\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat > C:\\\\Users\\\\18514\\\\AppData\\\\Local\\\\Temp\\\\idf_export.log 2>&1 && idf.py build > C:\\\\Users\\\\18514\\\\AppData\\\\Local\\\\Temp\\\\idf_build.log 2>&1 && echo BUILD_DONE >> C:\\\\Users\\\\18514\\\\AppData\\\\Local\\\\Temp\\\\idf_build.log\")",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\18514\\\\AppData\\\\Local\\\\Temp\\\\build_esp.bat\")",
+      "Bash(sleep 5 && cat /c/Users/18514/AppData/Local/Temp/idf_build.log 2>/dev/null | tail -5; echo \"---\"; cat /c/Users/18514/AppData/Local/Temp/idf_export.log 2>/dev/null | tail -5)",
+      "Read(//c/Users/18514/AppData/Local/Temp/**)",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\18514\\\\AppData\\\\Local\\\\Temp\\\\build_esp2.bat\")",
+      "Bash(cmd.exe /c \"C:\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py --help\")",
+      "Bash(ls -la /c/Users/18514/.codex/)",
+      "Read(//c/Users/18514/.codex//**)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\18514\\.codex"
+    ]
+  }
+}

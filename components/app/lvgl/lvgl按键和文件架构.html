@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LVGL UI 架构 · 分层图 &amp; 按键导航</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0E0F14; color: #F5F5F7; font-family: system-ui, -apple-system, sans-serif; padding: 24px; }
+h1 { font-size: 22px; margin-bottom: 4px; }
+.date { color: #5C5F73; font-size: 13px; margin-bottom: 28px; }
+h2 { font-size: 16px; color: #FF9F0A; margin: 24px 0 12px; padding-bottom: 6px; border-bottom: 1px solid #2C2F3E; }
+
+/* 分层卡片图 */
+.layer-row { display: flex; align-items: stretch; gap: 12px; margin: 12px 0; flex-wrap: wrap; }
+.layer-card { background: #1C1C22; border: 1px solid #2C2F3E; border-radius: 12px; padding: 14px 18px; min-width: 200px; flex: 1; }
+.layer-card .tag { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 4px; margin-bottom: 6px; font-weight: 600; }
+.layer-card h3 { font-size: 14px; margin-bottom: 4px; }
+.layer-card p { font-size: 12px; color: #8E8E93; line-height: 1.5; }
+.layer-card .files { font-size: 11px; color: #5C5F73; margin-top: 6px; font-family: monospace; }
+.tag-l0 { background: #007AFF22; color: #59D0FF; }
+.tag-l1 { background: #34C75922; color: #34C759; }
+.tag-nav { background: #FF9F0A22; color: #FF9F0A; }
+.tag-l2 { background: #FF3B6B22; color: #FF3B6B; }
+.tag-l3 { background: #AF52DE22; color: #BF5AF2; }
+.tag-l4 { background: #FF648222; color: #FF6482; }
+.tag-res { background: #5C5F7322; color: #8E8E93; }
+
+/* 继承链条 */
+.inherit { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.inherit-chain { background: #1C1C22; border: 1px solid #2C2F3E; border-radius: 8px; padding: 6px 14px; font-size: 13px; }
+.inherit-chain .cls { color: #F5F5F7; font-weight: 600; }
+.inherit-chain .lv { color: #8E8E93; font-size: 11px; }
+.inherit .ic-arrow { color: #5C5F73; font-size: 14px; }
+
+/* 文件树 */
+.tree { list-style: none; font-size: 14px; line-height: 1.8; }
+.tree li { position: relative; padding-left: 24px; }
+.tree li::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 50%; border-left: 1px solid #3A3D4E; }
+.tree li::after { content: ''; position: absolute; left: 8px; top: 50%; width: 12px; border-top: 1px solid #3A3D4E; }
+.tree li:last-child::before { border-left: none; }
+.tree > li { padding-left: 0; }
+.tree > li::before, .tree > li::after { display: none; }
+.tree .dir { color: #59D0FF; font-weight: 600; }
+.tree .file { color: #F5F5F7; }
+.tree .badge { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+.b-l0 { background: #007AFF22; color: #59D0FF; }
+.b-l1 { background: #34C75922; color: #34C759; }
+.b-nav { background: #FF9F0A22; color: #FF9F0A; }
+.b-l2 { background: #FF3B6B22; color: #FF3B6B; }
+.b-l3 { background: #AF52DE22; color: #BF5AF2; }
+.b-l4 { background: #FF648222; color: #FF6482; }
+.b-res { background: #5C5F7322; color: #8E8E93; }
+
+/* 导航流向图 */
+.flow { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 0; margin: 16px 0; }
+.flow-box { background: #1C1C22; border: 1px solid #2C2F3E; border-radius: 12px; padding: 12px 18px; text-align: center; min-width: 100px; flex: 1; }
+.flow-box .label { font-size: 11px; color: #8E8E93; }
+.flow-box .key { font-size: 13px; font-weight: 600; color: #F5F5F7; margin-top: 2px; }
+.flow .arrow { color: #5C5F73; font-size: 20px; margin: 0 4px; }
+
+/* 按键表 */
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+th { text-align: left; color: #8E8E93; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #2C2F3E; }
+td { padding: 6px 10px; border-bottom: 1px solid #1C1C22; }
+td:first-child { color: #FF9F0A; font-weight: 600; font-family: monospace; }
+tr:hover td { background: #1C1C22; }
+</style>
+</head>
+<body>
+
+<h1>LVGL UI 架构 · 分层图 &amp; 按键导航</h1>
+<div class="date">更新日期：2026-05-14</div>
+
+<!-- ============================================================ -->
+<!-- 分层卡片                                                       -->
+<!-- ============================================================ -->
+<h2>分层架构总览</h2>
+
+<div class="layer-row">
+  <div class="layer-card">
+    <div class="tag tag-l0">第 0 层 · 系统核心</div>
+    <h3>core/ 核心</h3>
+    <p>主循环、屏幕初始化、GPIO 按键映射、长按逻辑、顶层焦点组、lvgl_defer() 异步执行、FreeRTOS 互斥锁</p>
+    <div class="files">lvgl_main 主循环 · tool_config 配置</div>
+  </div>
+  <div class="layer-card">
+    <div class="tag tag-l1">第 1 层 · 锁屏层</div>
+    <h3>screen/ 屏幕</h3>
+    <p>全屏壁纸、ENTER 解锁、时间显示、齿轮 Lottie 动画预加载、状态栏 WiFi/蓝牙/电量/音量</p>
+    <div class="files">lock_screen 锁屏 · gear_page 齿轮动画 · status_bar 状态栏</div>
+  </div>
+  <div class="layer-card">
+    <div class="tag tag-nav">导航层</div>
+    <h3>nav/ 导航</h3>
+    <p>三张卡片轮播、圆点指示器、AppBase* 指针跳转应用入口</p>
+    <div class="files">card_menu 卡片菜单</div>
+  </div>
+</div>
+
+<div class="layer-row">
+  <div class="layer-card">
+    <div class="tag tag-l2">第 2 层 · App UI</div>
+    <h3>app/*App 基类</h3>
+    <p>UI 布局、焦点环导航、可重载行为钩子（纯虚或空实现）</p>
+    <div class="files">SettingsApp 设置 · MusicApp 音乐 · SerialApp 串口</div>
+  </div>
+  <div class="layer-card">
+    <div class="tag tag-l3">第 3 层 · 硬件实现</div>
+    <h3>app/*Impl 实现</h3>
+    <p>硬件控制：WiFi/BT/MQTT 开关、亮度 PWM、歌曲库与播放逻辑、UART 串口</p>
+    <div class="files">SettingsImpl 设置实现 · MusicImpl 音乐实现 · SerialImpl 串口实现</div>
+  </div>
+  <div class="layer-card">
+    <div class="tag tag-l4">第 4 层 · 子页面</div>
+    <h3>app/* 子页面</h3>
+    <p>仅音乐有：竖排选歌列表、每页 5 首、圆点分页</p>
+    <div class="files">SongListPage 选歌页（MusicImpl 的友元）</div>
+  </div>
+</div>
+
+<div class="layer-row">
+  <div class="layer-card" style="min-width:100%">
+    <div class="tag tag-res">资源层 res/</div>
+    <p>图片数据（.c 文件）、自建字库、Lottie 齿轮动画 JSON</p>
+    <div class="files">res/picture/ 图片 · res/font/ 字体 · res/lottie/ 动画</div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 继承链                                                         -->
+<!-- ============================================================ -->
+<h2>继承链（第 2 层 → 第 3 层 → 第 4 层）</h2>
+
+<div class="inherit">
+  <div class="inherit-chain"><span class="cls">AppBase</span> <span class="lv">（纯虚基类）</span></div>
+  <span class="ic-arrow">▸</span>
+  <div class="inherit-chain"><span class="cls">SettingsApp</span> : AppBase <span class="lv">（UI 布局 + 钩子）</span></div>
+  <span class="ic-arrow">▸</span>
+  <div class="inherit-chain"><span class="cls">SettingsImpl</span> : SettingsApp <span class="lv">（硬件控制）</span></div>
+</div>
+
+<div class="inherit">
+  <div class="inherit-chain"><span class="cls">AppBase</span> <span class="lv">（纯虚基类）</span></div>
+  <span class="ic-arrow">▸</span>
+  <div class="inherit-chain"><span class="cls">MusicApp</span> : AppBase <span class="lv">（播放器 UI + 钩子）</span></div>
+  <span class="ic-arrow">▸</span>
+  <div class="inherit-chain"><span class="cls">MusicImpl</span> : MusicApp <span class="lv">（歌曲库 + 播放）</span></div>
+  <span class="ic-arrow">↷</span>
+  <div class="inherit-chain"><span class="cls">SongListPage</span> <span class="lv">（子页面，MusicImpl 的友元）</span></div>
+</div>
+
+<div class="inherit">
+  <div class="inherit-chain"><span class="cls">AppBase</span> <span class="lv">（纯虚基类）</span></div>
+  <span class="ic-arrow">▸</span>
+  <div class="inherit-chain"><span class="cls">SerialApp</span> : AppBase <span class="lv">（终端 UI + 钩子）</span></div>
+  <span class="ic-arrow">▸</span>
+  <div class="inherit-chain"><span class="cls">SerialImpl</span> : SerialApp <span class="lv">（UART + 日志钩子）</span></div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 文件树                                                         -->
+<!-- ============================================================ -->
+<h2>文件结构</h2>
+<ul class="tree">
+  <li><span class="dir">lvgl/</span></li>
+  <li>
+    <span class="dir">core/</span> <span class="badge b-l0">第 0 层 · 系统核心</span>
+    <ul class="tree">
+      <li><span class="dir">inc/</span> <span class="file">lvgl_main 主循环</span>, <span class="file">tool_config 配置</span></li>
+      <li><span class="dir">src/</span> <span class="file">lvgl_main 主循环</span>, <span class="file">tool_config 配置</span></li>
+    </ul>
+  </li>
+  <li>
+    <span class="dir">ui/</span>
+    <ul class="tree">
+      <li>
+        <span class="dir">screen/ 屏幕</span> <span class="badge b-l1">第 1 层 · 锁屏层</span>
+        <ul class="tree">
+          <li><span class="dir">inc/</span> <span class="file">lock_screen 锁屏</span>, <span class="file">gear_page 齿轮动画</span>, <span class="file">status_bar 状态栏</span></li>
+          <li><span class="dir">src/</span> <span class="file">lock_screen 锁屏</span>, <span class="file">gear_page 齿轮动画</span>, <span class="file">status_bar 状态栏</span></li>
+        </ul>
+      </li>
+      <li>
+        <span class="dir">nav/ 导航</span> <span class="badge b-nav">导航层 · 卡片轮播</span>
+        <ul class="tree">
+          <li><span class="dir">inc/</span> <span class="file">card_menu 卡片菜单</span></li>
+          <li><span class="dir">src/</span> <span class="file">card_menu 卡片菜单</span></li>
+        </ul>
+      </li>
+      <li>
+        <span class="dir">app/ 应用</span> <span class="badge b-l2">第 2 层 · 应用 UI</span>
+        <ul class="tree">
+          <li><span class="dir">inc/</span> <span class="file">app_base 应用基类</span>, <span class="file">settings_app 设置</span>, <span class="file">music_app 音乐</span>, <span class="file">serial_app 串口</span></li>
+          <li><span class="dir">src/</span> <span class="file">settings_app 设置</span>, <span class="file">music_app 音乐</span>, <span class="file">serial_app 串口</span>, <span class="file">music_impl 音乐实现</span>, <span class="file">settings_impl 设置实现</span></li>
+        </ul>
+        <ul class="tree" style="margin-top:4px">
+          <li>
+            <span class="dir">settings/ 设置</span> <span class="badge b-l3">第 3 层</span>
+            <ul class="tree"><li><span class="file">settings 设置</span>, <span class="file">impl 实现</span></li></ul>
+          </li>
+          <li>
+            <span class="dir">music/ 音乐</span> <span class="badge b-l3">第 3 层</span> + <span class="badge b-l4">第 4 层</span>
+            <ul class="tree"><li><span class="file">music 音乐</span>, <span class="file">impl 实现</span>, <span class="file">song_list 选歌列表</span>, <span class="file">song_list 选歌列表</span></li></ul>
+          </li>
+          <li>
+            <span class="dir">serial/ 串口</span> <span class="badge b-l3">第 3 层</span>
+            <ul class="tree"><li><span class="file">serial 串口</span>, <span class="file">impl 实现</span>, <span class="file">impl 实现</span></li></ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>
+    <span class="dir">res/ 资源</span> <span class="badge b-res">资源层</span>
+    <ul class="tree">
+      <li><span class="dir">picture/ 图片</span> <span class="file">icon_settings 设置图标</span>, <span class="file">icon_music 音乐图标</span>, ...</li>
+      <li><span class="dir">font/ 字体</span> <span class="file">lv_font_custom_16 自建 16 像素字体</span></li>
+      <li><span class="dir">lottie/ 动画</span> <span class="file">gear_anim 齿轮动画</span>, <span class="file">lottie_gear_data 齿轮 Lottie 数据</span></li>
+    </ul>
+  </li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- 按键导航                                                       -->
+<!-- ============================================================ -->
+<h2>按键导航流向</h2>
+<div class="flow">
+  <div class="flow-box">
+    <div class="label">锁屏</div>
+    <div class="key">🔒 LockScreen</div>
+  </div>
+  <div class="arrow">▶ ENTER</div>
+  <div class="flow-box">
+    <div class="label">卡片菜单</div>
+    <div class="key">📋 CardMenu</div>
+  </div>
+  <div class="arrow">▶ ENTER</div>
+  <div class="flow-box">
+    <div class="label">应用页</div>
+    <div class="key">⚙️ 设置 / 🎵 音乐 / 🔌 串口</div>
+  </div>
+  <div class="arrow">◀ ESC</div>
+  <div class="flow-box">
+    <div class="label">返回上级</div>
+    <div class="key">CardMenu / LockScreen</div>
+  </div>
+</div>
+
+<h2>按键映射</h2>
+<table>
+  <tr><th>按键</th><th>GPIO</th><th>锁屏</th><th>卡片菜单</th><th>应用内</th></tr>
+  <tr><td>PREV</td><td>CONFIG_LVGL_KEY_PREV_GPIO</td><td>—</td><td>左滑卡片</td><td>焦点上移 / 减小值</td></tr>
+  <tr><td>NEXT</td><td>CONFIG_LVGL_KEY_NEXT_GPIO</td><td>—</td><td>右滑卡片</td><td>焦点下移 / 增大值</td></tr>
+  <tr><td>ENTER</td><td>LV_EVENT_KEY</td><td>解锁 → 卡片菜单</td><td>进入应用</td><td>进入调整模式 / 触发动作</td></tr>
+  <tr><td>ESC</td><td>LV_EVENT_KEY</td><td>—</td><td>回锁屏</td><td>退出调整 / 返回上级</td></tr>
+</table>
+
+<p style="font-size:13px;color:#8E8E93;margin:12px 0">
+按键检测流程：GPIO 中断 → ISR 入队 FreeRTOS 队列 → 主循环 <code>Button::process()</code> 出队 → <code>get_pressed_gpio()</code> 读取当前键值<br>
+ENTER/ESC 通过 <code>LV_EVENT_KEY</code> 事件 + <code>lv_indev_t</code> 映射到 KEY 设备 <code>key_board_cb</code> 回调
+</p>
+
+<!-- ============================================================ -->
+<!-- App 焦点环                                                     -->
+<!-- ============================================================ -->
+<h2>App 焦点环</h2>
+<p style="font-size:13px;color:#8E8E93;margin-bottom:8px">
+每个 App 内部用 PREV/NEXT 在焦点项间循环，ENTER 进入调整模式，再次 ENTER 确认退出，ESC 退出调整。
+</p>
+<table>
+  <tr><th>App</th><th>焦点环顺序</th><th>调整模式行为</th></tr>
+  <tr>
+    <td>设置</td>
+    <td>WiFi → 蓝牙 → MQTT → <b>亮度</b> → 低功耗</td>
+    <td>WiFi/蓝牙/MQTT/低功耗：ENTER 切换开关<br>亮度：ENTER +5，ESC -5</td>
+  </tr>
+  <tr>
+    <td>音乐</td>
+    <td>选歌 → 进度 → 播放模式 → <b>播放控制</b> → 音效</td>
+    <td>进度/模式/音效：PREV/NEXT 调值，ENTER 确认<br>播放控制：ENTER 播放/暂停，PREV/NEXT 切歌</td>
+  </tr>
+  <tr>
+    <td>串口</td>
+    <td>波特率 → 终端模式 → 滚动控制</td>
+    <td>ENTER 循环切值</td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<!-- 数据流                                                         -->
+<!-- ============================================================ -->
+<h2>关键数据流</h2>
+<table>
+  <tr><th>场景</th><th>路径</th><th>说明</th></tr>
+  <tr>
+    <td>WiFi 开关</td>
+    <td>SettingsApp::do_enter → lvgl_defer → SettingsImpl::on_wifi_toggle</td>
+    <td>defer 到 LVGL 任务外执行，避免死锁</td>
+  </tr>
+  <tr>
+    <td>歌曲播放</td>
+    <td>MusicImpl::on_song_select → DecodeTask → I2S 输出</td>
+    <td>MusicImpl 通过任务通知触发解码</td>
+  </tr>
+  <tr>
+    <td>进度计时</td>
+    <td>progress_timer_cb（1 秒）→ m_elapsed++ → update_display</td>
+    <td>静态成员函数，每秒更新进度条和时间</td>
+  </tr>
+  <tr>
+    <td>选歌跳转</td>
+    <td>SongListPage ENTER → MusicImpl::on_song_select → 返回播放器</td>
+    <td>SongListPage 是 MusicImpl 的友元</td>
+  </tr>
+  <tr>
+    <td>锁屏计时</td>
+    <td>lock_screen 定时器（1 秒）→ factory_config::time::get_time</td>
+    <td>每秒刷新锁屏时间显示</td>
+  </tr>
+</table>
+
+<div style="margin-top:32px;padding-top:12px;border-top:1px solid #2C2F3E;color:#5C5F73;font-size:12px">
+生成日期：2026-05-14 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240 &nbsp;|&nbsp; 四层架构
+</div>
+
+</body>
+</html>

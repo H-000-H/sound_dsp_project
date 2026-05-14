@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "docx": {
+      "source": "tfriedel/claude-office-skills",
+      "sourceType": "github",
+      "skillPath": "public/docx/SKILL.md",
+      "computedHash": "7e9ae9fe0dfdcad6da0c900046a4f3cbc2b6a9cc7c5c64c00d15076beaf83596"
+    },
+    "pdf": {
+      "source": "tfriedel/claude-office-skills",
+      "sourceType": "github",
+      "skillPath": "public/pdf/SKILL.md",
+      "computedHash": "ddea8ef1d003acd187a635aa5f65b562bedea0c70a6319f8bbd3deaf54775940"
+    },
+    "pptx": {
+      "source": "tfriedel/claude-office-skills",
+      "sourceType": "github",
+      "skillPath": "public/pptx/SKILL.md",
+      "computedHash": "e4bf9be4e051629460c024619e590a84831ce5bb42ee83adaf63960fb3ce89ec"
+    },
+    "ui-ux-pro-max": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/ui-ux-pro-max/SKILL.md",
+      "computedHash": "6337038fe1fe6bbe1b9f252ab678ee575859190bab6f0f246f4061824eb40875"
+    },
+    "xlsx": {
+      "source": "tfriedel/claude-office-skills",
+      "sourceType": "github",
+      "skillPath": "public/xlsx/SKILL.md",
+      "computedHash": "caf8f7b57d32d44eef9e4bd68f5201775ac42f6d7311935606cf75ff0cbba1b1"
+    }
+  }
+}

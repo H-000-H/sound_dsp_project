@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sound DSP — 踩坑全记录</title>
+<style>
+  :root {
+    --bg: #F5F0FF; --surface: #FFFFFF; --border: #D4C4F0;
+    --text: #3D2C5C; --text-dim: #7A6A9A; --accent: #7C4DFF;
+    --accent2: #B388FF; --green: #2E7D32; --blue: #5C6BC0;
+    --red: #D32F2F; --yellow: #F9A825; --orange: #E65100;
+    --purple: #7C4DFF; --pink: #C62828; --cyan: #4527A0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6; padding: 30px 16px;
+  }
+  .container { max-width: 920px; margin: 0 auto; }
+
+  h1 {
+    font-size: 28px; font-weight: 800; margin-bottom: 2px;
+    background: linear-gradient(135deg,#7C4DFF,#B388FF,#E040FB);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 28px; }
+
+  /* ===== Quick Nav ===== */
+  .quick-nav {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 28px;
+  }
+  .quick-nav a {
+    padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    text-decoration: none; border: 1px solid var(--border); color: var(--text-dim);
+    transition: all .15s;
+  }
+  .quick-nav a:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ===== Timeline ===== */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 8px; top: 0; bottom: 0;
+    width: 2px; background: linear-gradient(to bottom,#7C4DFF,#B388FF,#E040FB,#5C6BC0,#D4C4F0);
+  }
+  .entry {
+    position: relative; margin-bottom: 24px; padding: 16px 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; transition: border-color .2s;
+  }
+  .entry:hover { border-color: var(--accent); }
+  .entry::before {
+    content: ""; position: absolute; left: -22px; top: 20px;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--bg);
+  }
+  .entry-date { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: 1px; margin-bottom: 4px; }
+  .entry-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+
+  .tag {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    padding: 1px 8px; border-radius: 12px; margin-right: 3px; letter-spacing: .3px;
+  }
+  .tag-sys { background: rgba(230,81,0,0.06); color: var(--orange); }
+  .tag-fix { background: rgba(46,125,50,0.06); color: var(--green); }
+  .tag-serial { background: rgba(46,125,50,0.06); color: var(--green); }
+  .tag-bug { background: rgba(211,47,47,0.06); color: var(--red); }
+  .tag-dram { background: rgba(249,168,37,0.08); color: var(--yellow); }
+  .tag-keypad { background: rgba(124,77,255,0.05); color: var(--accent2); }
+  .tag-wifi { background: rgba(124,77,255,0.08); color: var(--purple); }
+  .tag-music { background: rgba(198,40,40,0.06); color: var(--pink); }
+  .tag-arch { background: rgba(69,39,160,0.06); color: var(--cyan); }
+
+  /* ===== Pitfall Cards ===== */
+  .pits-grid { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+  .pit {
+    background: rgba(249,168,37,0.03); border: 1px solid rgba(249,168,37,0.12);
+    border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.5;
+  }
+  .pit strong { color: var(--yellow); }
+  .pit code {
+    background: rgba(124,77,255,0.05); padding: 0 5px; border-radius: 4px;
+    font-size: 12px; color: var(--cyan); font-family: "SF Mono","Fira Code","Consolas",monospace;
+  }
+  .pit .file {
+    color: var(--blue); font-family: "SF Mono","Fira Code","Consolas",monospace; font-size: 11px;
+  }
+  .pit .sln { display: block; margin-top: 4px; color: var(--green); font-weight: 600; }
+
+  /* ===== Section ===== */
+  .section-title {
+    font-size: 18px; font-weight: 700; margin: 32px 0 14px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border); color: var(--accent);
+  }
+
+  /* ===== Table ===== */
+  .tbl {
+    width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0;
+    border-radius: 10px; overflow: hidden;
+  }
+  .tbl th {
+    text-align: left; padding: 7px 10px; background: rgba(124,77,255,0.04);
+    border-bottom: 1px solid var(--border); color: var(--text-dim);
+    font-weight: 700; font-size: 11px; letter-spacing: .5px;
+  }
+  .tbl td { padding: 6px 10px; border-bottom: 1px solid rgba(47,32,79,0.08); color: var(--text-dim); }
+  .tbl td:first-child { color: var(--blue); font-family: "SF Mono","Fira Code","Consolas",monospace; font-size: 11px; }
+  .tbl tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 7px; border-radius: 8px; }
+  .badge-done { background: rgba(46,125,50,0.06); color: var(--green); }
+  .badge-wip { background: rgba(230,81,0,0.06); color: var(--orange); }
+  .badge-ko { background: rgba(211,47,47,0.06); color: var(--red); }
+
+  ul { padding-left: 16px; margin-top: 4px; }
+  ul li { margin-bottom: 4px; color: var(--text-dim); font-size: 13px; }
+  ul li strong { color: var(--text); }
+
+  @media (max-width: 600px) {
+    body { padding: 12px 10px; }
+    .entry { padding: 12px 14px; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>✦ Sound DSP — 踩坑全记录</h1>
+<p class="subtitle">ESP32-S3 · LVGL 9.5 · 240×240 · 12 个已解决坑</p>
+
+<div class="quick-nav">
+  <a href="#pits">💀 12 坑</a>
+  <a href="#timeline">📅 时间线</a>
+  <a href="#keypad">🔑 按键吞噬</a>
+  <a href="#config">⚙ 配置</a>
+  <a href="#todo">📋 待办</a>
+</div>
+
+<!-- ============================================================ -->
+<!-- 💀 12 坑速查 -->
+<!-- ============================================================ -->
+<h2 class="section-title" id="pits">💀 12 个坑 · 速查</h2>
+
+<div class="pits-grid">
+
+<div class="pit">
+  <strong>1. WDT 修改后必须 fullclean</strong> — 改 <span class="file">sdkconfig</span> 禁用 WDT 后增量 build 仍编译旧代码。<br>
+  <span class="sln">✅ <code>idf.py fullclean</code>（或删 build/ 目录）后重编。reconfigure 不够。</span>
+</div>
+
+<div class="pit">
+  <strong>2. LVGL 9.5 group 吞噬 PREV/NEXT</strong> — KEYPAD indev 下 PREV/NEXT 被 group 焦点管理消耗。<span class="sln">✅ GPIO 轮询绕过：<code>lv_timer</code> 定时读 <code>get_pressed_gpio()</code> 独立处理。</span>
+</div>
+
+<div class="pit">
+  <strong>3. WDT 条件编译分多层</strong> — <code>CONFIG_ESP_TASK_WDT_EN</code>（主开关）、<code>_INIT</code>（启动初始化）、<code>BOOTLOADER_WDT</code>。须全部设为 not set。
+</div>
+
+<div class="pit">
+  <strong>4. lv_lottie.h 强制要求 ThorVG</strong> — <code>lv_conf_internal.h</code> 默认 <code>LV_USE_LOTTIE=1</code> 但 Kconfig 注释掉。<span class="sln">✅ 顶层 CMakeLists.txt 加 <code>-DLV_USE_LOTTIE=0</code>，源码用 <code>#if LV_USE_LOTTIE</code> 包裹。</span>
+</div>
+
+<div class="pit">
+  <strong>5. PSRAM Quad vs Octal 模式不匹配</strong> — 硬件 Octal 但默认 Quad 导致 <code>PSRAM chip not connected</code> 反复重启。<span class="sln">✅ sdkconfig 设 <code>SPIRAM_MODE_OCT=y</code>。</span>
+</div>
+
+<div class="pit">
+  <strong>6. 显示缓冲区放 DRAM 导致内存爆</strong> — 56KB 缓冲区默认 <code>MALLOC_CAP_DMA</code> 占满 DRAM。<span class="sln">✅ 改用 <code>heap_caps_malloc(..., MALLOC_CAP_SPIRAM)</code> 优先 PSRAM。</span>
+</div>
+
+<div class="pit">
+  <strong>7. friend + static 重复声明</strong> — <span class="file">music_app.hpp</span> 同时有 <code>friend</code> 和 <code>static</code> 声明同一函数。<span class="sln">✅ 移除 static。</span>
+</div>
+
+<div class="pit">
+  <strong>8. 全局变量重复定义</strong> — <span class="file">music_impl.cpp</span> 重复定义 <code>g_song_list</code>（已存在于 <span class="file">song_list.cpp</span>）。<span class="sln">✅ 删重复。</span>
+</div>
+
+<div class="pit">
+  <strong>9. 串口换行后颜色丢失</strong> — <code>buf[0]=='I' && buf[1]==' '</code> 条件太严格。<span class="sln">✅ 改用 <code>buf[0]=='I'</code> 单字符判断。</span>
+</div>
+
+<div class="pit">
+  <strong>10. WiFi 断连后无法重连</strong> — 只调 <code>disconnect()</code> 不够。<span class="sln">✅ 超时后 <code>wifi->stop()</code> 完全停止驱动，重连前 <code>start()</code>。</span>
+</div>
+
+<div class="pit">
+  <strong>11. LVGL 堆 32KB → 爆死锁</strong> — draw layer buffer 耗尽。<span class="sln">✅ <code>LV_MEM_SIZE</code> 增大到 128KB。</span>
+</div>
+
+<div class="pit">
+  <strong>12. 高帧率 + WDT = 更容易触发</strong> — 帧率越高 timer 回调越频繁，阻塞时 WDT 更快超时。<span class="sln">✅ 本项目禁用 WDT（非工业场景不需要）。</span>
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- 📅 时间线 -->
+<!-- ============================================================ -->
+<h2 class="section-title" id="timeline">📅 时间线</h2>
+<div class="timeline">
+
+<!-- v2.7 -->
+<div class="entry">
+  <div class="entry-date">2026-05-14 · v2.7</div>
+  <div class="entry-title">WDT 禁用 · 颜色修正 · 帧率优化 · 12 坑总结</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-fix">WDT</span>
+    <span class="tag tag-serial">颜色</span>
+    <span class="tag tag-sys">帧率</span>
+  </p>
+  <ul>
+    <li><strong>⏱ WDT 完全禁用</strong>：sdkconfig 清除所有 WDT 配置 + 源码移除所有 <code>esp_task_wdt_add/reset</code> 调用</li>
+    <li><strong>🎨 颜色规则</strong>：<code>I</code>→绿 <code>#00FF41</code>，<code>W</code>→黄 <code>#FFD700</code>，<code>E</code>→红 <code>#FF3B6B</code>，其他→蓝 <code>#59D0FF</code></li>
+    <li><strong>⚡ 帧率提升</strong>：<code>vTaskDelay(5)</code> → <code>vTaskDelay(2)</code>，~60fps</li>
+  </ul>
+</div>
+
+<!-- v2.5 -->
+<div class="entry">
+  <div class="entry-date">2026-05-14 · v2.5</div>
+  <div class="entry-title">按键统一修复 · GPIO 轮询模式</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-keypad">按键</span>
+    <span class="tag tag-fix">修复</span>
+    <span class="tag tag-wifi">WiFi</span>
+  </p>
+  <ul>
+    <li>music_app / serial_app 全部改用上升沿 GPIO 轮询，避免 ENTER/ESC 双重触发</li>
+    <li>WiFi 超时后 <code>wifi->stop()</code> 代替仅 <code>disconnect()</code></li>
+    <li>串口每个 span 末尾加 <code>\n</code> 解决消息摞到一起</li>
+  </ul>
+</div>
+
+<!-- v2.3-2.4 -->
+<div class="entry">
+  <div class="entry-date">2026-05-14 · v2.3–2.4</div>
+  <div class="entry-title">编译修复 · DRAM 压缩 · LVGL group 确认</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-dram">DRAM</span>
+    <span class="tag tag-keypad">按键</span>
+    <span class="tag tag-arch">架构</span>
+  </p>
+  <ul>
+    <li>lv_lottie.h ThorVG → <code>-DLV_USE_LOTTIE=0</code></li>
+    <li><code>dram0.bss</code> 9344B → 5376B（↓43%），显存→PSRAM</li>
+    <li><strong>LVGL 9.5 group 吞噬确认</strong>：PREV/NEXT 被 group 消耗，不发送 LV_EVENT_KEY</li>
+    <li>music_nav_timer_cb friend+static 冲突解决，全局变量重复定义解决</li>
+  </ul>
+</div>
+
+<!-- v2.1-2.2 -->
+<div class="entry">
+  <div class="entry-date">2026-05-13 · v2.1–2.2</div>
+  <div class="entry-title">三层导航 · 串口终端 · 音乐播放器 · WiFi/MQTT 重构</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-arch">架构</span>
+    <span class="tag tag-serial">串口</span>
+    <span class="tag tag-music">音乐</span>
+    <span class="tag tag-wifi">WiFi</span>
+  </p>
+  <ul>
+    <li>锁屏→卡片轮播→功能页 三层导航，3 卡循环，220ms ease-out</li>
+    <li>USB Serial/JTAG 直读 + <code>esp_log_set_vprintf()</code> 钩子 + 环形缓冲区 PSRAM</li>
+    <li>Spangroup 着色 + 长数据截断 + 音量同步</li>
+    <li>TLSF 堆 32KB→128KB（防死锁），字库 6→3755 汉字</li>
+    <li>PSRAM Octal 模式稳定工作（AP 0x0d, gen3, 64Mbit, 40MHz）</li>
+  </ul>
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- 🔑 按键系统 -->
+<!-- ============================================================ -->
+<h2 class="section-title" id="keypad">🔑 LVGL 9.5 group 吞噬详解</h2>
+
+<div class="pits-grid">
+<div class="pit">
+  <strong>核心问题</strong>：LV_INDEV_TYPE_KEYPAD 下，PREV/NEXT 被 group 内部焦点导航消耗，不会发送 <code>LV_EVENT_KEY</code>。ENTER/ESC 正常（group 不处理它们）。
+</div>
+<div class="pit">
+  <strong>当前影响</strong>：音乐播放器、串口调试、歌曲列表 → PREV/NEXT 无法切换焦点区。卡片菜单正常（GPIO 轮询独立驱动）。
+</div>
+<div class="pit">
+  <strong>方案一（推荐）</strong>：GPIO 轮询 — <code>lv_timer</code> 定时读 <code>Button::get_pressed_gpio()</code>，独立于 group。<br>
+  <strong>方案二</strong>：<code>lv_group_set_editing(true)</code> — ENTER 进入编辑模式后 PREV/NEXT 由对象自身处理。
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ⚙ 配置参考 -->
+<!-- ============================================================ -->
+<h2 class="section-title" id="config">⚙ 系统配置参考</h2>
+
+<table class="tbl">
+<thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>CONFIG_LV_MEM_SIZE</td><td>128 KB</td><td>LVGL TLSF 堆，32KB 不够会死锁</td></tr>
+<tr><td>CONFIG_LV_DRAW_THREAD_STACK_SIZE</td><td>≥ 32768</td><td>ThorVG 渲染线程栈</td></tr>
+<tr><td>CONFIG_SPIRAM_MODE_OCT</td><td>y</td><td>Octal PSRAM（AP 0x0d, gen3, 64Mbit）</td></tr>
+<tr><td>CONFIG_SPIRAM_SPEED</td><td>40M</td><td>PSRAM 频率</td></tr>
+<tr><td>CONFIG_SPIRAM_USE_CAPS_ALLOC</td><td>y</td><td>caps 分配器</td></tr>
+<tr><td>CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY</td><td>y</td><td>BSS 段可放 PSRAM</td></tr>
+<tr><td>lcd_stack_size</td><td>24 KB</td><td>LCD 任务栈</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 📋 待办 -->
+<!-- ============================================================ -->
+<h2 class="section-title" id="todo">📋 待办</h2>
+
+<div class="pits-grid">
+<div class="pit" style="border-left: 3px solid var(--red);">
+  <strong>🔴 高优先级</strong>
+  <ul>
+    <li>音乐播放器 PREV/NEXT 焦点切换（GPIO 轮询已实现待验证）</li>
+    <li>歌曲列表选中 + 播放功能验证</li>
+    <li>串口调试焦点区切换验证</li>
+    <li>PC 关闭串口时系统卡死重启问题</li>
+  </ul>
+</div>
+<div class="pit" style="border-left: 3px solid var(--orange);">
+  <strong>🟠 中优先级</strong>
+  <ul>
+    <li>蓝牙图标接入</li>
+    <li>DRAM 进一步压缩（目标 20KB 以下）</li>
+    <li>HEX 模式完善</li>
+    <li>查看历史消息功能稳定</li>
+  </ul>
+</div>
+</div>
+
+</div>
+</body>
+</html>

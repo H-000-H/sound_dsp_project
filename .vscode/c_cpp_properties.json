@@ -1,0 +1,16 @@
+{
+  "configurations": [
+    {
+      "name": "ESP-IDF",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "compilerPath": "D:\\Espressif_vscode\\tools\\xtensa-esp-elf\\esp-14.2.0_20251107\\xtensa-esp-elf\\bin\\xtensa-esp32s3-elf-gcc.exe",
+      "cStandard": "c11",
+      "cppStandard": "c++20",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "D:/Espressif_vscode/frameworks/esp-idf-v5.5.2/components/**"
+      ]
+    }
+  ],
+  "version": 4
+}
