@@ -1,4 +1,5 @@
 #include "lock_screen.hpp"
+#include "theme.hpp"
 #include "gear_page.hpp"
 #include "nav/inc/card_menu.hpp"
 #include "factory.hpp"
@@ -30,10 +31,12 @@ void lock_screen_show(void)
 {
     s_unlocking = false;
 
-    if (s_screen) {
+    if (s_screen)
+    {
         lv_screen_load(s_screen);
         lv_group_t* g = lv_group_get_default();
-        if (g) {
+        if (g)
+        {
             lv_group_remove_all_objs(g);
             lv_group_add_obj(g, s_key_handler);
             lv_group_focus_obj(s_key_handler);
@@ -43,7 +46,7 @@ void lock_screen_show(void)
 
     /* ——— 首次创建 ——— */
     s_screen = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(s_screen, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_screen, lv_color_hex(th_bg()), 0);
     lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
 
     s_key_handler = lv_obj_create(s_screen);
@@ -61,13 +64,17 @@ void lock_screen_show(void)
 
     /* 时间 — Apple Watch 风格 */
     lv_obj_t* lock_time = lv_label_create(s_screen);
-    lv_obj_set_style_text_color(lock_time, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(lock_time, lv_color_hex(th_text()), 0);
     lv_obj_set_style_text_font(lock_time, &lv_font_montserrat_36, 0);
     lv_obj_align(lock_time, LV_ALIGN_TOP_MID, 0, 30);
 
-    auto update_lock_time = [](lv_timer_t* t) {
+    auto update_lock_time = [](lv_timer_t* t)
+    {
         lv_obj_t* lb = static_cast<lv_obj_t*>(lv_timer_get_user_data(t));
-        if (!lb || !lv_obj_is_valid(lb)) { lv_timer_delete(t); return; }
+        if (!lb || !lv_obj_is_valid(lb))
+        {
+            lv_timer_delete(t); return;
+        }
         auto* ti = factory_config::time::get_time();
         auto info = ti->get_time();
         lv_label_set_text_fmt(lb, "%02d:%02d", info.hour, info.minute);
@@ -81,7 +88,8 @@ void lock_screen_show(void)
     lv_screen_load(s_screen);
 
     lv_group_t* g = lv_group_get_default();
-    if (!g) {
+    if (!g)
+    {
         g = lv_group_create();
         lv_group_set_default(g);
     }

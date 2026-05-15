@@ -67,7 +67,7 @@ void app_freertos_init()
     {
         if (lcd_task_stack) heap_caps_free(lcd_task_stack);
         if (lcd_task_tcb) heap_caps_free(lcd_task_tcb);
-        // Fallback
+        // 回退方案
         xTaskCreatePinnedToCore(lcd_tasks::lcd_task, "lcd_task", lcd_stack_size, nullptr, 5, nullptr, CORE_ONE);
     }
 

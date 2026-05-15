@@ -47,7 +47,8 @@ public:
     bool is_mqtt_auto() const { return m_mqtt_auto; }
 
     /** 获取 WiFi 事件组（供内部 wifi_connect_task 使用） */
-    EventGroupHandle_t wifi_evt() {
+    EventGroupHandle_t wifi_evt()
+    {
         if (!m_wifi_evt) m_wifi_evt = xEventGroupCreate();
         return m_wifi_evt;
     }

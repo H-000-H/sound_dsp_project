@@ -24,6 +24,6 @@ idf_component_register(
         "lvgl/UI/screen/inc"
         "lvgl/res/picture"
         "lvgl/res/lottie"
-    REQUIRES freertos device_hal service json lvgl esp_netif
+    REQUIRES freertos device_hal service json lvgl esp_netif algorithm
     EMBED_TXTFILES "lvgl/res/lottie/setting.json"
 )

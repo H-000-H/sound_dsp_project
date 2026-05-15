@@ -35,7 +35,8 @@ struct WifiManager::Impl
 
 void WifiManager::on_disconnected()
 {
-    if (m_impl->disconnected_cb) {
+    if (m_impl->disconnected_cb)
+    {
         m_impl->disconnected_cb();
     }
 }

@@ -5,20 +5,19 @@
 #include <cstdarg>
 #include "esp_attr.h"
 
-
-
 extern "C" { LV_FONT_DECLARE(lv_font_custom_16); }
 
 SerialImpl g_serial_impl;
 
 /* ==================================================================== */
-/*  Ring buffer: stores ESP-IDF logs and USB data into s_stored         */
+/*  环形缓冲区：将 ESP-IDF 日志和 USB 数据存入 s_stored                    */
 /* ==================================================================== */
 
 static constexpr int MAX_STORED = 512;
 static constexpr int LINE_SZ    = 128;
 
-struct StoredLine {
+struct StoredLine 
+{
     uint32_t color;
     char     text[LINE_SZ];
 };
@@ -27,10 +26,10 @@ static EXT_RAM_BSS_ATTR StoredLine s_stored[MAX_STORED];
 static int s_stored_head = 0;
 static int s_stored_tail = 0;
 
-/* Scroll offset: 0 = latest, positive = scroll back N lines */
+/* 滚动偏移：0 = 最新，正数 = 向后回滚 N 行 */
 int s_scroll_offset = 0;
 
-/* Tracks last rendered ring state to avoid unnecessary redraws */
+/* 跟踪上次渲染的环形状态，避免不必要的重绘 */
 static int s_last_rendered_head = -1;
 
 static int s_stored_count()
@@ -40,7 +39,7 @@ static int s_stored_count()
     return MAX_STORED - s_stored_tail + s_stored_head;
 }
 
-/* Get line at ring index (0 = oldest) */
+/* 获取环形索引处的行（0 = 最早） */
 static const StoredLine* get_line(int idx)
 {
     if (idx < 0 || idx >= s_stored_count()) return nullptr;
@@ -70,33 +69,42 @@ static void push_line(uint32_t color, const char* str, int len)
         s_stored_tail = (s_stored_tail + 1) % MAX_STORED;
 }
 
-/* ESP-IDF log hook -> push_line(color) + forward to USB TX */
+/* 指向 esp_log_set_vprintf 之前的原始输出函数（用于 USB TX） */
+static vprintf_like_t s_orig_vprintf = nullptr;
+
+/* ESP-IDF 日志钩子 -> 先送原始输出（USB TX），再捕获一份给屏幕显示 */
 static int log_vprintf(const char* fmt, va_list args)
 {
-    static char buf[256];
-    int ret = vsnprintf(buf, sizeof(buf), fmt, args);
-    if (ret > 0) {
-        /* Strip trailing newline */
-        int len = ret;
+    int ret = 0;
+    if (s_orig_vprintf)
+    {
+        va_list args_tx;
+        va_copy(args_tx, args);
+        ret = s_orig_vprintf(fmt, args_tx);
+        va_end(args_tx);
+    }
+
+    va_list args_cap;
+    va_copy(args_cap, args);
+    char buf[256];
+    int n = vsnprintf(buf, sizeof(buf), fmt, args_cap);
+    va_end(args_cap);
+
+    if (n > 0)
+    {
+        int len = n;
         while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r'))
             len--;
 
-        /* Color by log level prefix char (format: "I (12345) TAG: msg" / "W ..." / "E ...") */
         uint32_t color = color_by_prefix(buf, len);
         if (len > 0)
             push_line(color, buf, len);
-    }
-    /* Forward to USB Serial/JTAG TX so PC monitor receives it too */
-    /* Forward to USB Serial/JTAG TX so PC monitor receives it too */
-    auto& console = SerialConsole::get_instance();
-    if (console.is_active() && console.is_connected()) {
-        console.write((const uint8_t*)buf, ret);
     }
     return ret;
 }
 
 /* ==================================================================== */
-/*  LVGL spangroup rendering                                            */
+/*  LVGL 渲染                                            */
 /* ==================================================================== */
 void SerialApp::refr_timer_cb(lv_timer_t* t)
 {
@@ -106,29 +114,37 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
 
     /* 轮询 USB 连接状态 */
     auto& console = SerialConsole::get_instance();
-    if (console.is_active()) {
+    if (console.is_active()) 
+    {
         console.poll_connection();
         bool was_connected = app->m_connected;
         app->m_connected = console.is_connected();
-        if (was_connected != app->m_connected) {
+        if (was_connected != app->m_connected)
+        {
             app->update_display();
         }
     }
-    /* Read USB RX data from SerialConsole -> s_stored */
-    if (console.is_active()) {
+    /* 从 SerialConsole 读取 USB RX 数据 -> s_stored */
+    if (console.is_active())
+    {
         uint8_t buf[256];
         size_t n = console.read(buf, sizeof(buf) - 1);
-        if (n > 0) {
-            if (app->m_term_mode == 1) {
+        if (n > 0)
+        {
+            if (app->m_term_mode == 1)
+            {
                 /* HEX 模式：将收到的字节按固定宽度格式化为十六进制文本 */
                 static uint8_t s_hex_buf[16];
                 static int s_hex_cnt = 0;
-                for (size_t i = 0; i < n; i++) {
+                for (size_t i = 0; i < n; i++) 
+                {
                     s_hex_buf[s_hex_cnt++] = buf[i];
-                    if (s_hex_cnt == 16) {
+                    if (s_hex_cnt == 16) 
+                    {
                         char hex_line[LINE_SZ];
                         int pos = 0;
-                        for (int j = 0; j < 16; j++) {
+                        for (int j = 0; j < 16; j++) 
+                        {
                             pos += snprintf(hex_line + pos, sizeof(hex_line) - pos, "%02X ", s_hex_buf[j]);
                         }
                         hex_line[pos] = '\0';
@@ -140,9 +156,12 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
                 /* 终端模式：按行解析，根据前缀着色 */
                 int line_start = 0;
                 uint32_t last_color = 0x59D0FF;
-                for (size_t i = 0; i < n; i++) {
-                    if (buf[i] == '\n' || buf[i] == '\r') {
-                        if ((int)i > line_start) {
+                for (size_t i = 0; i < n; i++)
+                {
+                    if (buf[i] == '\n' || buf[i] == '\r') 
+                    {
+                        if ((int)i > line_start)
+                        {
                             int seg_len = (int)(i - line_start);
                             uint32_t seg_color = color_by_prefix((const char*)(buf + line_start), seg_len);
                             if (seg_color == 0x59D0FF && (buf[line_start] < 'A' || buf[line_start] > 'Z'))
@@ -154,7 +173,8 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
                         line_start = (int)(i + 1);
                     }
                 }
-                if (line_start < (int)n) {
+                if (line_start < (int)n)
+                {
                     int seg_len = (int)(n - line_start);
                     uint32_t seg_color = color_by_prefix((const char*)(buf + line_start), seg_len);
                     if (seg_color == 0x59D0FF && (buf[line_start] < 'A' || buf[line_start] > 'Z'))
@@ -166,34 +186,37 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
     }
 
     int head = s_stored_head;
-    /* No new data and scroll hasn't changed, skip render */
+    /* 没有新数据且滚动未变，跳过渲染 */
     if (head == s_last_rendered_head && s_scroll_offset == 0 && s_last_rendered_head >= 0) return;
 
-    /* Delete all old spans */
+    /* 删除所有旧的 span */
     uint32_t old_cnt = lv_spangroup_get_span_count(app->m_output);
-    for (uint32_t i = 0; i < old_cnt; i++) {
+    for (uint32_t i = 0; i < old_cnt; i++) 
+    {
         lv_span_t* s = lv_spangroup_get_child(app->m_output, 0);
         if (s) lv_spangroup_delete_span(app->m_output, s);
     }
 
     int cnt = s_stored_count();
-    if (cnt == 0) {
+    if (cnt == 0)
+    {
         s_last_rendered_head = head;
         s_scroll_offset = 0;
         lv_spangroup_refresh(app->m_output);
         return;
     }
 
-    /* Determine which lines to show based on scroll offset */
-    int max_lines = 10;  /* how many lines fit on screen */
+    /* 根据滚动偏移决定显示哪些行 */
+    int max_lines = 10;  /* 屏幕能容纳的行数 */
     int total = cnt;
 
-    int start_line;  /* index in ring (0=oldest) of first visible line */
-    if (s_scroll_offset == 0) {
-        /* Auto-scroll: show latest max_lines lines */
+    int start_line;  /* 第一条可见行在环形中的索引（0=最早） */
+    if (s_scroll_offset == 0)
+    {
+        /* 自动滚动：显示最新的 max_lines 行 */
         start_line = (total > max_lines) ? total - max_lines : 0;
     } else {
-        /* Manual scroll: show from scroll_offset, but clamp */
+        /* 手动滚动：从 scroll_offset 开始显示，但不超过边界 */
         start_line = total - s_scroll_offset - max_lines;
         if (start_line < 0) start_line = 0;
     }
@@ -201,8 +224,9 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
     int show_cnt = total - start_line;
     if (show_cnt > max_lines) show_cnt = max_lines;
 
-    /* Build spans */
-    for (int i = 0; i < show_cnt; i++) {
+    /* 构建 span 列表 */
+    for (int i = 0; i < show_cnt; i++)
+    {
         const StoredLine* line = get_line(start_line + i);
         if (!line || line->text[0] == '\0') continue;
         lv_span_t* span = lv_spangroup_add_span(app->m_output);
@@ -219,7 +243,7 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
 }
 
 /* ==================================================================== */
-/*  impl implementation - called by SerialApp::show()                   */
+/*  impl 实现 - 由 SerialApp::show() 调用                   */
 /* ==================================================================== */
 void SerialImpl::start_serial()
 {
@@ -227,8 +251,8 @@ void SerialImpl::start_serial()
     if (!console.is_active())
         console.init(-1, -1, BAUD_RATES[m_baud_idx]);
 
-    /* Hook ESP-IDF log -> s_stored + USB TX */
-    esp_log_set_vprintf(log_vprintf);
+    /* 挂钩 ESP-IDF 日志：原始输出路径不变，另捕获一份给屏幕 */
+    s_orig_vprintf = esp_log_set_vprintf(log_vprintf);
 
     m_connected = console.is_active();
     update_display();
@@ -237,20 +261,28 @@ void SerialImpl::start_serial()
 void SerialImpl::stop_serial()
 {
     auto& console = SerialConsole::get_instance();
-    if (console.is_active()) {
+    if (console.is_active())
+    {
         console.deinit();
+    }
+    /* 恢复原始输出函数 */
+    if (s_orig_vprintf)
+    {
+        esp_log_set_vprintf(s_orig_vprintf);
+        s_orig_vprintf = nullptr;
     }
     m_connected = false;
 }
 
 /* ==================================================================== */
-/*  Behavior hooks                                                      */
+/*  行为钩子                                                      */
 /* ==================================================================== */
 
 void SerialImpl::on_baud_change(int idx)
 {
     auto& console = SerialConsole::get_instance();
-    if (console.is_active()) {
+    if (console.is_active())
+    {
         console.deinit();
         vTaskDelay(pdMS_TO_TICKS(50));
         console.init(-1, -1, BAUD_RATES[idx]);
@@ -262,7 +294,7 @@ void SerialImpl::on_baud_change(int idx)
 void SerialImpl::on_term_mode_change(int idx)
 {
     (void)idx;
-    /* Terminal/HEX is display-format only, no hardware change */
+    /* 终端/HEX 模式仅为显示格式，无硬件变更 */
 }
 
 
@@ -271,7 +303,8 @@ void SerialImpl::on_clear()
     s_stored_head = s_stored_tail = 0;
     s_last_rendered_head = -1;
     s_scroll_offset = 0;
-    if (m_output) {
+    if (m_output)
+    {
         lv_spangroup_refresh(m_output);
     }
 }
@@ -282,10 +315,10 @@ bool serial_debug_screen_is_active(void)
     return scr != nullptr && lv_screen_active() == scr;
 }
 
-/* Scroll up/down - called from key handler when FOCUS_SCROLL is in adjust mode */
+/* 上/下滚动 - FOCUS_SCROLL 处于调整模式时由按键处理器调用 */
 
 /* ==================================================================== */
-/*  New behavior hooks (pause/view-up/view-down)                        */
+/*  新行为钩子（暂停/视图上/视图下）                        */
 void SerialImpl::on_toggle_pause()
 {
     s_scroll_offset = 0;
@@ -300,7 +333,8 @@ void SerialImpl::on_view_up()
     int max_visible = 10;
     if (cnt <= max_visible) return;
     int max_page = (cnt - 1) / max_visible;
-    if (m_view_page < max_page) {
+    if (m_view_page < max_page)
+    {
         m_view_page++;
         s_scroll_offset = m_view_page * max_visible;
         if (s_scroll_offset > cnt - max_visible)
@@ -311,7 +345,8 @@ void SerialImpl::on_view_up()
 
 void SerialImpl::on_view_down()
 {
-    if (m_view_page > 0) {
+    if (m_view_page > 0)
+    {
         m_view_page--;
         int max_visible = 10;
         s_scroll_offset = m_view_page * max_visible;

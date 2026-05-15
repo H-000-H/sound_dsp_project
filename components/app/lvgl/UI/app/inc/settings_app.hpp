@@ -4,6 +4,7 @@
 /* Layer 2: SettingsApp — UI 布局 + 按键导航 + 可重载行为钩子 */
 class SettingsApp : public AppBase {
 public:
+    static constexpr int ROW_COUNT = 6;
     void show() override;
     void hide() override;
     lv_obj_t* screen() const override { return m_screen; }
@@ -31,11 +32,12 @@ protected:
     void build_ui();
 
     lv_obj_t* m_screen    = nullptr;
-    lv_obj_t* m_rows[5]   = {};
+    lv_obj_t* m_rows[ROW_COUNT]   = {};
     lv_obj_t* m_togs[4]   = {};
     lv_obj_t* m_bar       = nullptr;
     lv_obj_t* m_bright_lbl = nullptr;
     int       m_focus     = 0;
+    int       m_initial_focus = 0;  /* show() 用，非 0 时首次聚焦到指定行 */
     uint32_t  m_last_tick = 0;
     bool      m_block_first = false;
 
@@ -44,13 +46,15 @@ protected:
     bool m_bt_on      = false;
     bool m_mqtt_on    = false;
     bool m_low_pwr_on = false;
+    bool m_theme_dark = true;
     int  m_bright_val = 80;
 
-    static constexpr uint32_t ICON_COLORS[5] = {0x007AFF, 0x007AFF, 0xFF3B30, 0xFF9500, 0x34C759};
+    static constexpr uint32_t ICON_COLORS[ROW_COUNT] = {0x007AFF, 0x007AFF, 0xFF3B30, 0xFF9500, 0x34C759, 0x007AFF};
 };
 
 /* Layer 3: SettingsImpl — 实际硬件控制 */
-class SettingsImpl : public SettingsApp {
+class SettingsImpl : public SettingsApp 
+{
 protected:
     void on_wifi_toggle(bool on) override;
     void on_bt_toggle(bool on) override;

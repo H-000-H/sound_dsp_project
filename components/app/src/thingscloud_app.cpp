@@ -183,7 +183,7 @@ void ThingsCloudApp::set_rgb_led(uint32_t gpio)
 
 void ThingsCloudApp::init()
 {
-    // Use KConfig defaults if not overridden at runtime
+    // 使用 KConfig 默认值，运行时未覆盖则生效
     if (m_ssid.empty()) m_ssid = CONFIG_THINGSCLOUD_WIFI_SSID;
     if (m_pass.empty()) m_pass = CONFIG_THINGSCLOUD_WIFI_PASSWORD;
     if (m_mqtt_uri.empty()) m_mqtt_uri = CONFIG_THINGSCLOUD_MQTT_URI;
@@ -198,7 +198,8 @@ void ThingsCloudApp::init()
     wifi->init();
 
     /* 注册 WiFi 意外断连回调，用于更新 UI 图标 */
-    wifi->set_disconnected_cb([this]() {
+    wifi->set_disconnected_cb([this]()
+    {
         this->on_wifi_disconnected();
     });
 
@@ -321,7 +322,8 @@ void ThingsCloudApp::on_wifi_connected()
     m_wifi_connected = true;
     m_wifi_connecting = false;
     ui_set_wifi_state(true);
-    if (m_mqtt_auto) {
+    if (m_mqtt_auto)
+    {
         start_mqtt();
     } else {
         ESP_LOGI("ThingsCloud", "MQTT auto disabled by settings, skipping");
@@ -343,7 +345,8 @@ void ThingsCloudApp::stop()
     stop_mqtt();
 
     /* 取消正在等待的连接任务 */
-    if (m_wifi_evt) {
+    if (m_wifi_evt)
+    {
         xEventGroupSetBits(m_wifi_evt, WIFI_CANCEL_BIT);
     }
 
@@ -369,7 +372,8 @@ void ThingsCloudApp::start_mqtt()
 
     /* stop_mqtt 会 destroy MQTT client，所以重启前需要重新 init */
     auto* mqtt = factory_config::network::get_mqtt();
-    if (!mqtt->is_inited()) {
+    if (!mqtt->is_inited())
+    {
         MqttConfig cfg = {};
         cfg.broker_uri = m_mqtt_uri.c_str();
         cfg.client_id  = m_mqtt_client_id.c_str();

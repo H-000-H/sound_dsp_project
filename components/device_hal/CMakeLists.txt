@@ -50,6 +50,6 @@
 
     REQUIRES freertos config
 
-    PRIV_REQUIRES bsp driver esp_driver_uart esp_driver_usb_serial_jtag
+    PRIV_REQUIRES bsp driver algorithm esp_driver_uart esp_driver_usb_serial_jtag
 
 )

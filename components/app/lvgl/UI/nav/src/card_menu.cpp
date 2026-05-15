@@ -6,6 +6,7 @@
  *   ENTER/ESC — LV_EVENT_KEY → key_cb()
  */
 #include "card_menu.hpp"
+#include "theme.hpp"
 #include "ui/screen/inc/lock_screen.hpp"
 #include "app/inc/app_base.hpp"
 #include "app/inc/settings_app.hpp"
@@ -78,15 +79,17 @@ static void animate_to(int new_page);
 /*====================================================================*/
 static void update_highlight()
 {
-    for (int i = 0; i < APP_COUNT; i++) {
+    for (int i = 0; i < APP_COUNT; i++)
+    {
         if (!s_cards[i]) continue;
-        if (i == s_page) {
-            lv_obj_set_style_border_color(s_cards[i], lv_color_hex(0xFFFFFF), 0);
+        if (i == s_page)
+        {
+            lv_obj_set_style_border_color(s_cards[i], lv_color_hex(th_accent()), 0);
             lv_obj_set_style_border_width(s_cards[i], 3, 0);
             lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);
             if (img) lv_obj_set_style_img_recolor_opa(img, LV_OPA_TRANSP, 0);
         } else {
-            lv_obj_set_style_border_color(s_cards[i], lv_color_hex(0x333333), 0);
+            lv_obj_set_style_border_color(s_cards[i], lv_color_hex(th_border()), 0);
             lv_obj_set_style_border_width(s_cards[i], 1, 0);
             lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);
             if (img) lv_obj_set_style_img_recolor_opa(img, LV_OPA_30, 0);
@@ -96,13 +99,15 @@ static void update_highlight()
 
 static void update_dots()
 {
-    for (int i = 0; i < APP_COUNT; i++) {
+    for (int i = 0; i < APP_COUNT; i++)
+    {
         if (!s_dots[i]) continue;
-        if (i == s_page) {
-            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(0xFFFFFF), 0);
+        if (i == s_page)
+        {
+            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text()), 0);
             lv_obj_set_size(s_dots[i], 8, 8);
         } else {
-            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(0x555555), 0);
+            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text_sec()), 0);
             lv_obj_set_size(s_dots[i], 6, 6);
         }
     }
@@ -121,7 +126,8 @@ static void animate_to(int new_page)
     int cur_x = lv_obj_get_x(s_card_row);
     bool wrap = (new_page == 0 && s_page == APP_COUNT - 1) ||
                 (new_page == APP_COUNT - 1 && s_page == 0);
-    if (wrap) {
+    if (wrap)
+    {
         for (int i = 1; i < APP_COUNT - 1; i++)
             lv_obj_add_flag(s_cards[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -141,9 +147,11 @@ static void animate_to(int new_page)
     lv_anim_set_values(&a, cur_x, tar_x);
     lv_anim_set_duration(&a, 220);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_completed_cb(&a, [](lv_anim_t*) {
+    lv_anim_set_completed_cb(&a, [](lv_anim_t*)
+    {
         s_animating = false;
-        for (int i = 0; i < APP_COUNT; i++) {
+        for (int i = 0; i < APP_COUNT; i++)
+        {
             if (s_cards[i])
                 lv_obj_remove_flag(s_cards[i], LV_OBJ_FLAG_HIDDEN);
         }
@@ -161,12 +169,16 @@ static void nav_timer_cb(lv_timer_t* t)
 {
     (void)t;
     static bool s_prev_held = false;
-    if (lv_screen_active() != s_screen) { s_prev_held = false; return; }
+    if (lv_screen_active() != s_screen)
+    {
+        s_prev_held = false; return;
+    }
 
     int gpio = Button::get_instance().get_pressed_gpio();
     bool now_held = (gpio == GPIO_NEXT || gpio == GPIO_PREV);
 
-    if (now_held && !s_prev_held) {
+    if (now_held && !s_prev_held)
+    {
         if (gpio == GPIO_NEXT)
             animate_to(s_page < APP_COUNT - 1 ? s_page + 1 : 0);
         else
@@ -183,20 +195,25 @@ static void key_cb(lv_event_t* e)
     if (lv_event_get_code(e) != LV_EVENT_KEY) return;
     uint32_t key = lv_event_get_key(e);
 
-    if (key == LV_KEY_NEXT) {
+    if (key == LV_KEY_NEXT)
+    {
         animate_to(s_page < APP_COUNT - 1 ? s_page + 1 : 0);
     }
-    else if (key == LV_KEY_PREV) {
+    else if (key == LV_KEY_PREV)
+    {
         animate_to(s_page > 0 ? s_page - 1 : APP_COUNT - 1);
     }
-    else if (key == LV_KEY_ENTER) {
+    else if (key == LV_KEY_ENTER)
+    {
         /* 使用 AppBase 的 show() 进入应用 */
-        lv_async_call([](void* arg) {
+        lv_async_call([](void* arg)
+        {
             auto* app = static_cast<AppBase*>(arg);
             app->show();
         }, s_apps[s_page].app);
     }
-    else if (key == LV_KEY_ESC) {
+    else if (key == LV_KEY_ESC)
+    {
         lock_screen_show();
     }
 }
@@ -207,7 +224,10 @@ static void key_cb(lv_event_t* e)
 static void time_update_cb(lv_timer_t* t)
 {
     lv_obj_t* lb = static_cast<lv_obj_t*>(lv_timer_get_user_data(t));
-    if (!lb || !lv_obj_is_valid(lb)) { lv_timer_delete(t); return; }
+    if (!lb || !lv_obj_is_valid(lb))
+    {
+        lv_timer_delete(t); return;
+    }
     auto* ti = factory_config::time::get_time();
     auto info = ti->get_time();
     lv_label_set_text_fmt(lb, "%02d:%02d", info.hour, info.minute);
@@ -236,14 +256,15 @@ static void create_cards()
     lv_obj_set_style_layout(s_card_row, LV_LAYOUT_NONE, 0);
     lv_obj_remove_flag(s_card_row, LV_OBJ_FLAG_SCROLLABLE);
 
-    for (int i = 0; i < APP_COUNT; i++) {
+    for (int i = 0; i < APP_COUNT; i++)
+    {
         lv_obj_t* card = lv_obj_create(s_card_row);
         lv_obj_set_size(card, CARD_W, CARD_H);
         lv_obj_set_pos(card, i * STEP, 0);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x1C1C1E), 0);
+        lv_obj_set_style_bg_color(card, lv_color_hex(th_card()), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 20, 0);
-        lv_obj_set_style_border_color(card, lv_color_hex(0x333333), 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(th_border()), 0);
         lv_obj_set_style_border_width(card, 1, 0);
         lv_obj_set_style_pad_all(card, 0, 0);
         lv_obj_set_style_shadow_width(card, 0, 0);
@@ -262,7 +283,7 @@ static void create_cards()
 
         lv_obj_t* lbl = lv_label_create(card);
         lv_label_set_text(lbl, s_apps[i].name);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0xCCCCCC), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(th_text_sec()), 0);
         lv_obj_set_style_text_font(lbl, &lv_font_custom_16, 0);
         lv_obj_align(lbl, LV_ALIGN_BOTTOM_MID, 0, -6);
     }
@@ -274,19 +295,21 @@ static void create_dots()
     int total_w = APP_COUNT * 8 + (APP_COUNT - 1) * 8;
     int dot_x = (240 - total_w) / 2;
 
-    for (int i = 0; i < APP_COUNT; i++) {
+    for (int i = 0; i < APP_COUNT; i++)
+    {
         s_dots[i] = lv_obj_create(s_screen);
         lv_obj_set_style_radius(s_dots[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(s_dots[i], 0, 0);
         lv_obj_remove_flag(s_dots[i], LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_pos(s_dots[i], dot_x + i * 16, dot_y);
 
-        if (i == 0) {
+        if (i == 0)
+        {
             lv_obj_set_size(s_dots[i], 8, 8);
-            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text()), 0);
         } else {
             lv_obj_set_size(s_dots[i], 6, 6);
-            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(0x555555), 0);
+            lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text_sec()), 0);
         }
         lv_obj_set_style_bg_opa(s_dots[i], LV_OPA_COVER, 0);
     }
@@ -295,7 +318,7 @@ static void create_dots()
 static void create_time_label()
 {
     s_time_label = lv_label_create(s_screen);
-    lv_obj_set_style_text_color(s_time_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(s_time_label, lv_color_hex(th_text()), 0);
     lv_obj_set_style_text_font(s_time_label, &lv_font_montserrat_20, 0);
     lv_obj_align(s_time_label, LV_ALIGN_TOP_LEFT, 10, 8);
 
@@ -312,7 +335,8 @@ void card_menu_show(void)
 {
     lv_group_t* g = lv_group_get_default();
 
-    if (s_screen) {
+    if (s_screen)
+    {
         lv_screen_load(s_screen);
         s_animating = false;
         {
@@ -341,7 +365,7 @@ void card_menu_show(void)
     s_animating = false;
 
     s_screen = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(s_screen, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(s_screen, lv_color_hex(th_bg()), 0);
     lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
 
     create_time_label();

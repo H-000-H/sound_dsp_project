@@ -25,7 +25,10 @@ void gear_anim_preload(void)
     lv_obj_set_style_bg_opa(s_hidden_parent, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_hidden_parent, 0, 0);
     s_gear.lottie = lv_lottie_create(s_hidden_parent);
-    if (!s_gear.lottie) { heap_caps_free(s_gear.buf); s_gear.buf = NULL; return; }
+    if (!s_gear.lottie)
+    {
+        heap_caps_free(s_gear.buf); s_gear.buf = NULL; return;
+    }
     lv_lottie_set_buffer(s_gear.lottie, LOTTIE_W, LOTTIE_H, s_gear.buf);
     lv_lottie_set_src_data(s_gear.lottie, lottie_gear_json, lottie_gear_json_size);
     lv_obj_add_flag(s_gear.lottie, LV_OBJ_FLAG_HIDDEN);

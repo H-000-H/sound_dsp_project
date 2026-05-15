@@ -1,6 +1,6 @@
 # Sound DSP Project (ESP32-S3)
 
-> **踩坑记录** → [`NOTICE.html`](./NOTICE.html)（12 个已解决的坑，含解决方案）
+> **踩坑记录** → [`NOTICE.html`](./NOTICE.html)（13 个已解决的坑，含解决方案）
 
 ---
 
@@ -112,6 +112,13 @@
 > **⚠ 已知问题**：LVGL 9.5 的 `LV_INDEV_TYPE_KEYPAD` 在对象加入 group 后，PREV/NEXT 被 group 内部焦点管理吞噬，不发送 `LV_EVENT_KEY`。当前通过 GPIO 轮询绕过（详见 `NOTICE.html`）。
 
 检测流程：GPIO 中断 → ISR 入队 FreeRTOS 队列 → 主循环 `Button::process()` 出队 → `get_pressed_gpio()` 读取
+
+### ST7789 7 线无 CS 注意事项
+
+- **SPI Mode 3 必须**（`interface_cfg.mode = 3`）：CPOL=1, CPHA=1，否则屏幕不显示
+- **无 CS 引脚**（`spics_io_num = -1`）：DC 引脚代替命令/数据区分
+- **半双工**（`flags = SPI_DEVICE_HALFDUPLEX`）：7 线模组没有 MISO，只能发送不能接收
+- 配置见 <span class="file">components/device_hal/spi/src/spi_bus.cpp</span>
 
 ## 6. 模块职责
 

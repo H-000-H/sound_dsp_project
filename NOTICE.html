@@ -70,6 +70,7 @@
   .tag-wifi { background: rgba(124,77,255,0.08); color: var(--purple); }
   .tag-music { background: rgba(198,40,40,0.06); color: var(--pink); }
   .tag-arch { background: rgba(69,39,160,0.06); color: var(--cyan); }
+  .tag-theme { background: rgba(0,122,255,0.06); color: var(--blue); }
 
   /* ===== Pitfall Cards ===== */
   .pits-grid { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
@@ -127,10 +128,10 @@
 <div class="container">
 
 <h1>✦ Sound DSP — 踩坑全记录</h1>
-<p class="subtitle">ESP32-S3 · LVGL 9.5 · 240×240 · 12 个已解决坑</p>
+<p class="subtitle">ESP32-S3 · LVGL 9.5 · 240×240 · 14 个已解决坑</p>
 
 <div class="quick-nav">
-  <a href="#pits">💀 12 坑</a>
+  <a href="#pits">💀 14 坑</a>
   <a href="#timeline">📅 时间线</a>
   <a href="#keypad">🔑 按键吞噬</a>
   <a href="#config">⚙ 配置</a>
@@ -138,9 +139,9 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 💀 12 坑速查 -->
+<!-- 💀 13 坑速查 -->
 <!-- ============================================================ -->
-<h2 class="section-title" id="pits">💀 12 个坑 · 速查</h2>
+<h2 class="section-title" id="pits">💀 13 个坑 · 速查</h2>
 
 <div class="pits-grid">
 
@@ -166,7 +167,7 @@
 </div>
 
 <div class="pit">
-  <strong>6. 显示缓冲区放 DRAM 导致内存爆</strong> — 56KB 缓冲区默认 <code>MALLOC_CAP_DMA</code> 占满 DRAM。<span class="sln">✅ 改用 <code>heap_caps_malloc(..., MALLOC_CAP_SPIRAM)</code> 优先 PSRAM。</span>
+  <strong>6. 显示缓冲区放 DRAM 导致内存爆</strong> — 56KB 缓冲区默认 <code>MALLOC_CAP_DMA</code> 占满 DRAM。<span class="sln">✅ 非 LVGL 缓冲区（串口 ring buffer 等）用 <code>MALLOC_CAP_SPIRAM</code>。但 LVGL 绘制缓冲区例外（见第 14 坑）。</span>
 </div>
 
 <div class="pit">
@@ -191,6 +192,14 @@
 
 <div class="pit">
   <strong>12. 高帧率 + WDT = 更容易触发</strong> — 帧率越高 timer 回调越频繁，阻塞时 WDT 更快超时。<span class="sln">✅ 本项目禁用 WDT（非工业场景不需要）。</span>
+</div>
+
+<div class="pit">
+  <strong>13. ST7789 7 引脚无 CS — 必须 SPI Mode 3</strong> — 该模组没有独立 CS 引脚（<code>spics_io_num = -1</code>），DC 代替命令/数据区分。SPI 必须设为 <strong>Mode 3</strong>（CPOL=1, CPHA=1），否则 ST7789 无法正确采样 SCLK 边沿导致花屏或不显示。<span class="sln">✅ <span class="file">spi_bus.cpp</span> <code>interface_cfg.mode = 3</code>，同时设 <code>flags = SPI_DEVICE_HALFDUPLEX</code>（半双工，7 线无 MISO）。</span>
+</div>
+
+<div class="pit">
+  <strong>14. LVGL 帧缓冲放 PSRAM → WiFi 重连时花屏/卡死</strong> — ESP32-S3 PSRAM 通过 CPU cache 访问，WiFi <code>bcn_timeout</code> 触发重连 → flash/NVS 操作 → cache 禁用 → PSRAM 数据损坏。<span class="sln">✅ <span class="file">lvgl_main.cpp</span> 新增 <code>lvgl_alloc_buf()</code>，LVGL 绘制缓冲区优先从内部 RAM（<code>MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA</code>）分配，仅在 <code>USE_LVGL_PRAM=1</code> 时用 PSRAM。</span>
 </div>
 
 </div>
@@ -250,6 +259,44 @@
   </ul>
 </div>
 
+<!-- v1.8 -->
+<div class="entry">
+  <div class="entry-date">2026-05-12 · v1.8</div>
+  <div class="entry-title">架构重构：BSP typed pointer · HAL 抽象 · 边界收敛</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-arch">架构</span>
+    <span class="tag tag-sys">BSP</span>
+  </p>
+  <ul>
+    <li><strong>BSP void* → typed pointer</strong>：6 个 BSP 模块函数签名改为 typed handle</li>
+    <li><strong>HAL 公共头文件脱敏</strong>：7 个 device_hal 头文件不再暴露 BSP/ESP-IDF 类型</li>
+    <li><strong>CMake 依赖收紧</strong>：main/service/device_hal 组件 REQUIRES 精简</li>
+    <li><strong>基类虚析构补全</strong>：ChannelDevice / DisplayDevice / LightDevice</li>
+    <li><strong>消除循环依赖</strong>：m_time.cpp 回调注入、max98357A 改为 GpioController</li>
+    <li><strong>死代码清除</strong>：删除 bsp/clock/ 和 bsp/Digital amplifier/（空实现），目录名规范化</li>
+    <li><strong>BSP 错误处理补全</strong>：bsp_mqtt / bsp_tcp 返回值检查</li>
+  </ul>
+</div>
+
+<!-- v1.5 -->
+<div class="entry">
+  <div class="entry-date">2026-05-11 · v1.5</div>
+  <div class="entry-title">内存优化 · 按键重构 · WiFi 事件驱动 · SPI DMA 静态化</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-dram">DRAM</span>
+    <span class="tag tag-fix">修复</span>
+    <span class="tag tag-wifi">WiFi</span>
+  </p>
+  <ul>
+    <li><strong>DIRAM .bss 88% → 31%</strong>：LVGL 内置 malloc → C 库 malloc，串口缓冲区加 EXT_RAM_BSS_ATTR（206KB → 9KB）</li>
+    <li><strong>按键模块重构</strong>：支持 8 GPIO、非阻塞 process()、时间戳消抖、LVGL 集成</li>
+    <li><strong>WiFi 事件驱动</strong>：vTaskDelay(3000) → EventGroup + IP_EVENT_STA_GOT_IP</li>
+    <li><strong>SPI DMA 缓冲静态化</strong>：lcd_fill_rect_impl / lcd_draw_bitmap_impl 复用预分配 DMA 缓冲，消除堆碎片</li>
+    <li><strong>凭据外移</strong>：WiFi/MQTT 账号密码从硬编码移到 KConfig.projbuild</li>
+    <li><strong>LLM API 配置</strong>：DeepSeek 配置项（CONFIG_LLM_API_ENABLE）</li>
+  </ul>
+</div>
+
 <!-- v2.1-2.2 -->
 <div class="entry">
   <div class="entry-date">2026-05-13 · v2.1–2.2</div>
@@ -266,6 +313,24 @@
     <li>Spangroup 着色 + 长数据截断 + 音量同步</li>
     <li>TLSF 堆 32KB→128KB（防死锁），字库 6→3755 汉字</li>
     <li>PSRAM Octal 模式稳定工作（AP 0x0d, gen3, 64Mbit, 40MHz）</li>
+  </ul>
+</div>
+
+<!-- v3.0 -->
+<div class="entry">
+  <div class="entry-date">2026-05-15 · v3.0</div>
+  <div class="entry-title">浅色/深色主题 · 花屏修复 · 串口 FIFO 重构</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-theme">主题</span>
+    <span class="tag tag-fix">花屏</span>
+    <span class="tag tag-arch">重构</span>
+  </p>
+  <ul>
+    <li><strong>🎨 浅色/深色主题系统</strong>：<code>theme.hpp/cpp</code> 10 个颜色 getter，6 个 UI 文件替换硬编码颜色</li>
+    <li><strong>⚙ 设置页「外观」行</strong>：toggle 切换深色/浅色，所有 app 跟随</li>
+    <li><strong>🛡 LVGL 帧缓冲内存修复</strong>：<code>lvgl_alloc_buf()</code> 优先内部 RAM，避免 PSRAM cache 失效花屏</li>
+    <li><strong>🔁 串口 FIFO 替换</strong>：自定义 ring buffer → <code>buffer.h</code> FIFO</li>
+    <li><strong>📐 括号风格统一</strong>：全项目换行大括号</li>
   </ul>
 </div>
 
@@ -304,6 +369,9 @@
 <tr><td>CONFIG_SPIRAM_USE_CAPS_ALLOC</td><td>y</td><td>caps 分配器</td></tr>
 <tr><td>CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY</td><td>y</td><td>BSS 段可放 PSRAM</td></tr>
 <tr><td>lcd_stack_size</td><td>24 KB</td><td>LCD 任务栈</td></tr>
+	<tr><td>USE_LVGL_PRAM</td><td>0</td><td>LVGL 帧缓冲优先内部 RAM（防 PSRAM cache 失效）</td></tr>
+	<tr><td>USE_SINGE_BUFFER</td><td>1</td><td>LVGL 单缓冲模式（省内存）</td></tr>
+	<tr><td>USE_LVGL_DMA</td><td>1</td><td>LCD DMA 传输</td></tr>
 </tbody>
 </table>
 
@@ -314,21 +382,16 @@
 
 <div class="pits-grid">
 <div class="pit" style="border-left: 3px solid var(--red);">
-  <strong>🔴 高优先级</strong>
+  <strong>🔴 未解决</strong>
   <ul>
-    <li>音乐播放器 PREV/NEXT 焦点切换（GPIO 轮询已实现待验证）</li>
-    <li>歌曲列表选中 + 播放功能验证</li>
-    <li>串口调试焦点区切换验证</li>
-    <li>PC 关闭串口时系统卡死重启问题</li>
+    <li><strong>PC 关闭串口导致系统重启</strong> — USB Serial/JTAG 外设在 host 断连后，访问 TX FIFO 寄存器可能使总线挂起。已尝试中断屏蔽 + 写入前检测，仍未彻底解决。</li>
   </ul>
 </div>
 <div class="pit" style="border-left: 3px solid var(--orange);">
-  <strong>🟠 中优先级</strong>
+  <strong>🟠 待办</strong>
   <ul>
     <li>蓝牙图标接入</li>
-    <li>DRAM 进一步压缩（目标 20KB 以下）</li>
     <li>HEX 模式完善</li>
-    <li>查看历史消息功能稳定</li>
   </ul>
 </div>
 </div>

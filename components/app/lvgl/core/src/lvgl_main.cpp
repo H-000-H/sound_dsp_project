@@ -22,13 +22,25 @@ void lvgl_defer(void (*fn)(void*), void* arg)
 static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
 {
     DisplayDevice* screen = factory_config::screen::get_device();
-    if (screen) {
+    if (screen)
+    {
         uint32_t width  = (area->x2 - area->x1) + 1;
         uint32_t height = (area->y2 - area->y1) + 1;
         screen->draw_bitmap(area->x1, area->y1, area->x2, area->y2,
                            (uint16_t*)px_map, (width * height));
     }
     lv_disp_flush_ready(disp);
+}
+
+static void* lvgl_alloc_buf(size_t sz)
+{
+    /* 优先内部 RAM（避免 PSRAM cache 问题导致花屏）*/
+    uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
+    if (USE_LVGL_PRAM) caps = MALLOC_CAP_SPIRAM;
+    void* p = heap_caps_malloc(sz, caps);
+    if (!p && !USE_LVGL_PRAM) p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
+    if (!p) p = heap_caps_malloc(sz, MALLOC_CAP_DMA);
+    return p;
 }
 
 static void lvgl_display_init()
@@ -41,16 +53,13 @@ static void lvgl_display_init()
 #endif
 
 #if USE_SINGE_BUFFER
-    void* buf1 = heap_caps_malloc(byte_size, MALLOC_CAP_SPIRAM);
-    if (buf1 == nullptr) buf1 = heap_caps_malloc(byte_size, MALLOC_CAP_DMA);
+    void* buf1 = lvgl_alloc_buf(byte_size);
     lv_display_set_buffers(display, buf1, nullptr, byte_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 #endif
 
 #if USE_DOUBLE_BUFFER
-    void* buf1 = heap_caps_malloc(byte_size, MALLOC_CAP_SPIRAM);
-    if (buf1 == nullptr) buf1 = heap_caps_malloc(byte_size, MALLOC_CAP_DMA);
-    void* buf2 = heap_caps_malloc(byte_size, MALLOC_CAP_SPIRAM);
-    if (buf2 == nullptr) buf2 = heap_caps_malloc(byte_size, MALLOC_CAP_DMA);
+    void* buf1 = lvgl_alloc_buf(byte_size);
+    void* buf2 = lvgl_alloc_buf(byte_size);
     lv_display_set_buffers(display, buf1, buf2, byte_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 #endif
 
@@ -109,15 +118,22 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
 
     int gpio = Button::get_instance().get_pressed_gpio();
 
-    if (gpio >= 0) {
+    if (gpio >= 0)
+    {
         uint32_t key = 0;
-        for (size_t i = 0; i < sizeof(s_key_map) / sizeof(s_key_map[0]); i++) {
-            if (s_key_map[i].gpio == gpio) { key = s_key_map[i].lv_key; break; }
+        for (size_t i = 0; i < sizeof(s_key_map) / sizeof(s_key_map[0]); i++)
+        {
+            if (s_key_map[i].gpio == gpio)
+            {
+                key = s_key_map[i].lv_key; break;
+            }
         }
-        if (key) {
+        if (key)
+        {
             uint32_t now = lv_tick_get();
 
-            if (!was_pressed) {
+            if (!was_pressed)
+            {
                 data->state = LV_INDEV_STATE_PRESSED;
                 data->key = key;
                 press_start_ms = now;
@@ -129,8 +145,10 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
             }
 
             if ((key == LV_KEY_ESC || key == LV_KEY_ENTER) &&
-                (now - press_start_ms) >= KEY_REPEAT_DELAY_MS) {
-                if (repeat_phase == REPEAT_IDLE) {
+                (now - press_start_ms) >= KEY_REPEAT_DELAY_MS)
+                {
+                if (repeat_phase == REPEAT_IDLE)
+                {
                     repeat_phase = REPEAT_WAIT_PRESS;
                     last_repeat_ms = now - KEY_REPEAT_INTERVAL_MS + 5u;
                     data->state = LV_INDEV_STATE_RELEASED;
@@ -138,9 +156,11 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
                     last_key = key;
                     return;
                 }
-                if ((now - last_repeat_ms) >= KEY_REPEAT_INTERVAL_MS) {
+                if ((now - last_repeat_ms) >= KEY_REPEAT_INTERVAL_MS)
+                {
                     last_repeat_ms = now;
-                    if (repeat_phase == REPEAT_WAIT_PRESS) {
+                    if (repeat_phase == REPEAT_WAIT_PRESS)
+                    {
                         repeat_phase = REPEAT_WAIT_RELEASE;
                         data->state = LV_INDEV_STATE_PRESSED;
                     } else {
@@ -160,7 +180,8 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
         }
     }
 
-    if (was_pressed) {
+    if (was_pressed)
+    {
         data->state = LV_INDEV_STATE_RELEASED;
         data->key = last_key;
         was_pressed = false;
@@ -204,14 +225,16 @@ void lvgl_main()
     lock_screen_show();
     lvgl_mutex_unlock();
 
-    while (true) {
+    while (true)
+    {
         Button::get_instance().process(0);
 
         lvgl_mutex_lock();
         lv_timer_handler();
         lvgl_mutex_unlock();
 
-        if (s_defer_fn) {
+        if (s_defer_fn)
+        {
         auto fn  = s_defer_fn;
         auto arg = s_defer_arg;
         s_defer_fn  = nullptr;

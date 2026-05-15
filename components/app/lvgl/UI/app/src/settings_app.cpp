@@ -1,5 +1,6 @@
 #include "settings_app.hpp"
 #include "lvgl_main.hpp"
+#include "theme.hpp"
 
 extern "C" {
     LV_FONT_DECLARE(lv_font_montserrat_14);
@@ -40,7 +41,7 @@ static lv_obj_t* make_row(lv_obj_t* parent)
 {
     lv_obj_t* row = lv_obj_create(parent);
     lv_obj_set_size(row, lv_pct(100), 52);
-    lv_obj_set_style_bg_color(row, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(row, lv_color_hex(th_card()), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_radius(row, 10, 0);
@@ -55,7 +56,7 @@ static void row_label(lv_obj_t* row, const char* text)
 {
     lv_obj_t* lbl = lv_label_create(row);
     lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(th_text()), 0);
     lv_obj_set_style_text_font(lbl, &lv_font_custom_16, 0);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 52, 0);
 }
@@ -75,7 +76,8 @@ static lv_obj_t* create_toggle(lv_obj_t* parent)
 static void update_toggle(lv_obj_t* tog, bool on)
 {
     if (!tog) return;
-    if (on) {
+    if (on)
+    {
         lv_obj_set_style_bg_color(tog, lv_color_hex(0x34C759), 0);
         lv_obj_set_style_bg_opa(tog, LV_OPA_COVER, 0);
     } else {
@@ -111,16 +113,16 @@ static lv_obj_t* create_brightness_bar(lv_obj_t* parent, int val, lv_obj_t** out
     lv_obj_align(bar, LV_ALIGN_LEFT_MID, 0, 0);
     lv_bar_set_range(bar, 0, 100);
     lv_bar_set_value(bar, val, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0xE5E5EA), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(th_border_dim()), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(bar, 4, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x007AFF), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(th_accent()), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 4, LV_PART_INDICATOR);
 
     lv_obj_t* lbl = lv_label_create(cont);
     lv_label_set_text_fmt(lbl, "%d%%", val);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(0x8E8E93), 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(th_text_sec()), 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_align(lbl, LV_ALIGN_RIGHT_MID, 0, 0);
 
@@ -136,14 +138,16 @@ void SettingsApp::row_focused_cb(lv_event_t* e)
 {
     auto* self = static_cast<SettingsApp*>(lv_event_get_user_data(e));
     auto* row = static_cast<lv_obj_t*>(lv_event_get_target(e));
-    for (int i = 0; i < 5; i++) {
-        if (self->m_rows[i] == row) {
+    for (int i = 0; i < ROW_COUNT; i++)
+    {
+        if (self->m_rows[i] == row)
+        {
             int prev = self->m_focus;
             self->m_focus = i;
-            if (prev >= 0 && prev < 5 && self->m_rows[prev])
-                lv_obj_set_style_bg_color(self->m_rows[prev], lv_color_hex(0xFFFFFF), 0);
+            if (prev >= 0 && prev < ROW_COUNT && self->m_rows[prev])
+                lv_obj_set_style_bg_color(self->m_rows[prev], lv_color_hex(th_card()), 0);
             if (self->m_rows[i])
-                lv_obj_set_style_bg_color(self->m_rows[i], lv_color_hex(0xE5E5EA), 0);
+                lv_obj_set_style_bg_color(self->m_rows[i], lv_color_hex(th_card_hl()), 0);
             lv_obj_scroll_to_view(self->m_rows[self->m_focus], LV_ANIM_ON);
             break;
         }
@@ -153,7 +157,8 @@ void SettingsApp::row_focused_cb(lv_event_t* e)
 void SettingsApp::settings_key_cb(lv_event_t* e)
 {
     auto* self = static_cast<SettingsApp*>(lv_event_get_user_data(e));
-    if (lv_event_get_code(e) == LV_EVENT_KEY) {
+    if (lv_event_get_code(e) == LV_EVENT_KEY)
+    {
         uint32_t key = lv_event_get_key(e);
         if (key == LV_KEY_ENTER) self->do_enter();
         else if (key == LV_KEY_ESC) self->do_esc();
@@ -171,28 +176,37 @@ void SettingsApp::settings_click_cb(lv_event_t* e)
 /*====================================================================*/
 void SettingsApp::do_enter()
 {
-    if (m_block_first) { m_block_first = false; return; }
+    if (m_block_first)
+    {
+        m_block_first = false; return;
+    }
 
-    if (m_focus == 0 || m_focus == 1 || m_focus == 2 || m_focus == 4) {
+    if (m_focus == 0 || m_focus == 1 || m_focus == 2 || m_focus == 4)
+    {
         uint32_t now = lv_tick_get();
         if (lv_tick_elaps(m_last_tick) < 300) return;
         m_last_tick = now;
 
-        if (m_focus == 0) {
+        if (m_focus == 0)
+        {
             m_wifi_on = !m_wifi_on;
             update_toggle(m_togs[0], m_wifi_on);
-            lvgl_defer([](void* arg) {
+            lvgl_defer([](void* arg)
+            {
                 auto* s = static_cast<SettingsApp*>(arg);
                 s->on_wifi_toggle(s->m_wifi_on);
             }, this);
-        } else if (m_focus == 1) {
+        } else if (m_focus == 1)
+        {
             m_bt_on = !m_bt_on;
             update_toggle(m_togs[1], m_bt_on);
             on_bt_toggle(m_bt_on);
-        } else if (m_focus == 2) {
+        } else if (m_focus == 2)
+        {
             m_mqtt_on = !m_mqtt_on;
             update_toggle(m_togs[2], m_mqtt_on);
-            lvgl_defer([](void* arg) {
+            lvgl_defer([](void* arg)
+            {
                 auto* s = static_cast<SettingsApp*>(arg);
                 s->on_mqtt_toggle(s->m_mqtt_on);
             }, this);
@@ -201,18 +215,34 @@ void SettingsApp::do_enter()
             update_toggle(m_togs[3], m_low_pwr_on);
             on_low_power(m_low_pwr_on);
         }
-    } else if (m_focus == 3) {
+    } else if (m_focus == 3)
+    {
         m_bright_val += 5;
         if (m_bright_val > 100) m_bright_val = 100;
         lv_bar_set_value(m_bar, m_bright_val, LV_ANIM_ON);
         lv_label_set_text_fmt(m_bright_lbl, "%d%%", m_bright_val);
         on_brightness(m_bright_val);
+    } else if (m_focus == 5)
+    {
+        m_theme_dark = !m_theme_dark;
+        update_toggle(m_togs[4], m_theme_dark);
+        theme_set(m_theme_dark ? THEME_DARK : THEME_LIGHT);
+        /* 销毁当前屏幕，用新主题重建，焦点保持在"外观"行 */
+        lv_obj_del(m_screen);
+        m_screen = nullptr;
+        for (auto& r : m_rows) r = nullptr;
+        m_togs[0] = m_togs[1] = m_togs[2] = m_togs[3] = m_togs[4] = nullptr;
+        m_bar = m_bright_lbl = nullptr;
+        m_block_first = true;
+        m_initial_focus = 5;
+        show();
     }
 }
 
 void SettingsApp::do_esc()
 {
-    if (m_focus == 3) {
+    if (m_focus == 3)
+    {
         m_bright_val -= 5;
         if (m_bright_val < 0) m_bright_val = 0;
         lv_bar_set_value(m_bar, m_bright_val, LV_ANIM_ON);
@@ -230,12 +260,12 @@ void SettingsApp::do_esc()
 void SettingsApp::build_ui()
 {
     m_screen = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(m_screen, lv_color_hex(0xF2F2F7), 0);
+    lv_obj_set_style_bg_color(m_screen, lv_color_hex(th_bg()), 0);
     lv_obj_set_style_bg_opa(m_screen, LV_OPA_COVER, 0);
 
     lv_obj_t* title = lv_label_create(m_screen);
     lv_label_set_text(title, "设置");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(th_text()), 0);
     lv_obj_set_style_text_font(title, &lv_font_custom_16, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 12);
 
@@ -250,17 +280,22 @@ void SettingsApp::build_ui()
     lv_obj_set_style_pad_row(cont, 8, 0);
     lv_obj_set_scroll_dir(cont, LV_DIR_VER);
 
-    static const char* labels[] = {"WiFi", "蓝牙", "MQTT", "亮度", "低功耗"};
-    static const char* syms[]   = {LV_SYMBOL_WIFI, LV_SYMBOL_BLUETOOTH, LV_SYMBOL_CLOSE, LV_SYMBOL_IMAGE, LV_SYMBOL_BATTERY_FULL};
-    bool* states[] = {&m_wifi_on, &m_bt_on, &m_mqtt_on, nullptr, &m_low_pwr_on};
+    static const char* labels[] = {"WiFi", "蓝牙", "MQTT", "亮度", "低功耗", "外观"};
+    static const char* syms[]   = {LV_SYMBOL_WIFI, LV_SYMBOL_BLUETOOTH, LV_SYMBOL_CLOSE, LV_SYMBOL_IMAGE, LV_SYMBOL_BATTERY_FULL, LV_SYMBOL_IMAGE};
+    bool* states[] = {&m_wifi_on, &m_bt_on, &m_mqtt_on, nullptr, &m_low_pwr_on, &m_theme_dark};
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < ROW_COUNT; i++)
+    {
         m_rows[i] = make_row(cont);
         make_round_icon(m_rows[i], syms[i], ICON_COLORS[i]);
         row_label(m_rows[i], labels[i]);
 
-        if (i == 3) {
+        if (i == 3)
+        {
             create_brightness_bar(m_rows[i], m_bright_val, &m_bar, &m_bright_lbl);
+        } else if (i == 5) {
+            m_togs[4] = create_toggle(m_rows[i]);
+            update_toggle(m_togs[4], m_theme_dark);
         } else {
             int tog_idx = (i < 3) ? i : 3; /* WiFi→0, BT→1, MQTT→2, 低功耗→3 */
             m_togs[tog_idx] = create_toggle(m_rows[i]);
@@ -278,11 +313,12 @@ void SettingsApp::build_ui()
 /*====================================================================*/
 void SettingsApp::show()
 {
-    m_focus = 0;
+    m_focus = m_initial_focus;
     m_last_tick = 0;
     m_block_first = true;
 
-    if (m_screen) {
+    if (m_screen)
+    {
         lv_obj_del(m_screen);
         m_screen = nullptr;
         for (auto& r : m_rows) r = nullptr;
@@ -294,14 +330,16 @@ void SettingsApp::show()
 
     lv_group_t* g = lv_group_get_default();
     lv_group_remove_all_objs(g);
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < ROW_COUNT; i++)
         lv_group_add_obj(g, m_rows[i]);
-    lv_group_focus_obj(m_rows[0]);
+    lv_group_focus_obj(m_rows[m_focus]);
 
-    /* 初始高亮第一行 */
-    lv_obj_set_style_bg_color(m_rows[0], lv_color_hex(0xE5E5EA), 0);
+    /* 初始高亮 */
+    lv_obj_set_style_bg_color(m_rows[m_focus], lv_color_hex(th_card_hl()), 0);
 
     lv_screen_load(m_screen);
+
+    m_initial_focus = 0;
 }
 
 void SettingsApp::hide()

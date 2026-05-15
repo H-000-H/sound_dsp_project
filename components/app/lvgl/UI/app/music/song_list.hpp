@@ -23,6 +23,7 @@ private:
     lv_timer_t* m_nav_timer = nullptr;
 
     bool       m_nav_held = false;
+    bool       m_pending_enter = false;  /* show() 后等待 ENTER 松开 */
     int m_page = 0;
     int m_focus = 0;
 

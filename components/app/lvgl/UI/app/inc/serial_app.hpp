@@ -69,16 +69,10 @@ protected:
     static constexpr int STA_H      = 26;
     static constexpr int STA_Y      = 240 - STA_H;
 
-    static constexpr auto CLR_BG        = 0x0E0F14;
     static constexpr auto CLR_GREEN     = 0x00FF41;
-    static constexpr auto CLR_GRAY      = 0x5C5F73;
-    static constexpr auto CLR_GRAY2     = 0x3A3D4E;
-    static constexpr auto CLR_WHITE     = 0xF5F5F7;
-    static constexpr auto CLR_BORDER    = 0x2C2F3E;
     static constexpr auto CLR_RED       = 0xFF3B6B;
     static constexpr auto CLR_YELLOW    = 0xFFD700;
     static constexpr auto CLR_ACCENT    = 0x59D0FF;
-    static constexpr auto CLR_ORANGE    = 0xFF9F0A;
 };
 
 /* Layer 3: SerialImpl — 串口硬件 + 日志钩子 + 环形缓冲 */

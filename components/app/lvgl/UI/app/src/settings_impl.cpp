@@ -35,7 +35,8 @@ void SettingsImpl::on_mqtt_toggle(bool on)
 void SettingsImpl::on_brightness(int val)
 {
     static bool pwm_inited = false;
-    if (!pwm_inited) {
+    if (!pwm_inited)
+    {
         PwmOutputChannel::get_instance().init();
         pwm_inited = true;
     }

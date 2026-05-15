@@ -1,5 +1,6 @@
 #include "status_bar.hpp"
 #include "button.hpp"
+#include "theme.hpp"
 #include "ui/app/inc/serial_app.hpp"
 
 extern "C" { LV_FONT_DECLARE(lv_font_montserrat_20); }
@@ -18,7 +19,7 @@ static void wifi_init(void)
 {
     s_wifi.label = lv_label_create(lv_layer_top());
     lv_label_set_text(s_wifi.label, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(s_wifi.label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(s_wifi.label, lv_color_hex(th_text()), 0);
     lv_obj_set_style_text_font(s_wifi.label, &lv_font_montserrat_20, 0);
     lv_obj_align(s_wifi.label, LV_ALIGN_TOP_RIGHT, -38, 10);
     lv_obj_add_flag(s_wifi.label, LV_OBJ_FLAG_HIDDEN);
@@ -39,7 +40,7 @@ static void bt_init(void)
     s_bt.label = lv_label_create(lv_layer_top());
     lv_label_set_text(s_bt.label, LV_SYMBOL_BLUETOOTH);
     lv_obj_set_style_text_font(s_bt.label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(s_bt.label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(s_bt.label, lv_color_hex(th_text()), 0);
     lv_obj_align(s_bt.label, LV_ALIGN_TOP_RIGHT, -66, 10);
     lv_obj_add_flag(s_bt.label, LV_OBJ_FLAG_HIDDEN);
 }
@@ -63,7 +64,7 @@ static void battery_init(void)
 {
     s_batt.label = lv_label_create(lv_layer_top());
     lv_label_set_text(s_batt.label, LV_SYMBOL_BATTERY_FULL);
-    lv_obj_set_style_text_color(s_batt.label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(s_batt.label, lv_color_hex(th_text()), 0);
     lv_obj_set_style_text_font(s_batt.label, &lv_font_montserrat_20, 0);
     lv_obj_align(s_batt.label, LV_ALIGN_TOP_RIGHT, -10, 10);
 }
@@ -88,10 +89,12 @@ static void vol_timer_cb(lv_timer_t* t)
     static int      s_last_gpio   = -1;
     static uint32_t s_press_tick  = 0;
 
-    if (!serial_active) {
+    if (!serial_active)
+    {
         if (gpio == CONFIG_LVGL_KEY_NEXT_GPIO ||
             gpio == CONFIG_LVGL_KEY_PREV_GPIO) {
-            if (gpio != s_last_gpio) {
+            if (gpio != s_last_gpio)
+            {
                 s_last_gpio  = gpio;
                 s_press_tick = lv_tick_get();
             }
@@ -100,32 +103,38 @@ static void vol_timer_cb(lv_timer_t* t)
         }
 
         bool changed = false;
-        if (s_last_gpio >= 0 && lv_tick_elaps(s_press_tick) > 300) {
-            if (s_last_gpio == CONFIG_LVGL_KEY_NEXT_GPIO) {
+        if (s_last_gpio >= 0 && lv_tick_elaps(s_press_tick) > 300)
+        {
+            if (s_last_gpio == CONFIG_LVGL_KEY_NEXT_GPIO)
+            {
                 s_vol.value += 5;
                 if (s_vol.value > 100) s_vol.value = 100;
                 changed = true;
-            } else if (s_last_gpio == CONFIG_LVGL_KEY_PREV_GPIO) {
+            } else if (s_last_gpio == CONFIG_LVGL_KEY_PREV_GPIO)
+            {
                 s_vol.value -= 5;
                 if (s_vol.value < 0) s_vol.value = 0;
                 changed = true;
             }
         }
 
-        if (changed) {
+        if (changed)
+        {
             lv_slider_set_value(s_vol.bar, s_vol.value, LV_ANIM_ON);
             lv_obj_remove_flag(s_vol.cont, LV_OBJ_FLAG_HIDDEN);
             s_vol.last_tick = lv_tick_get();
         }
 
         if (!lv_obj_has_flag(s_vol.cont, LV_OBJ_FLAG_HIDDEN) &&
-            lv_tick_elaps(s_vol.last_tick) > 2000) {
+            lv_tick_elaps(s_vol.last_tick) > 2000)
+            {
             lv_obj_add_flag(s_vol.cont, LV_OBJ_FLAG_HIDDEN);
         }
     }
 
     /* WiFi 图标（串口界面强制隐藏） */
-    if (s_wifi.label) {
+    if (s_wifi.label)
+    {
         if (s_wifi.connected && !serial_active)
             lv_obj_remove_flag(s_wifi.label, LV_OBJ_FLAG_HIDDEN);
         else
@@ -133,7 +142,8 @@ static void vol_timer_cb(lv_timer_t* t)
     }
 
     /* 蓝牙图标 */
-    if (s_bt.label && lv_obj_is_valid(s_bt.label)) {
+    if (s_bt.label && lv_obj_is_valid(s_bt.label))
+    {
         if (s_bt.connected && !serial_active)
             lv_obj_remove_flag(s_bt.label, LV_OBJ_FLAG_HIDDEN);
         else
