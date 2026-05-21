@@ -4,7 +4,7 @@
 #include <cstddef>
 
 #include "freertos/FreeRTOS.h"
-#include "buffer.h"
+#include "m_buffer.h"
 
 /**
  * @brief 串口控制台管理器，供串口调试 App 使用（通过 UART0 读取 USB Serial/JTAG 端口）

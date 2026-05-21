@@ -3,14 +3,16 @@
 #include <cstdlib>
 
 /* 歌曲信息 */
-struct SongInfo {
+struct SongInfo 
+{
     const char* title;
     const char* artist;
     int duration_sec;
 };
 
 /* Layer 2: MusicApp — 播放器 UI 布局 + 焦点环 + 可重载行为钩子 */
-class MusicApp : public AppBase {
+class MusicApp : public AppBase 
+{
 public:
     void show() override;
     void hide() override;

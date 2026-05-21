@@ -244,21 +244,6 @@
 #endif
 
 /*================================================================================*/
-/* I2S 音频                                                                         */
-/*================================================================================*/
-#ifndef CONFIG_AUDIO_I2S_BCK_PIN
-    #define CONFIG_AUDIO_I2S_BCK_PIN 41
-#endif
-
-#ifndef CONFIG_AUDIO_I2S_WS_PIN
-    #define CONFIG_AUDIO_I2S_WS_PIN 42
-#endif
-
-#ifndef CONFIG_AUDIO_I2S_DOUT_PIN
-    #define CONFIG_AUDIO_I2S_DOUT_PIN 40
-#endif
-
-/*================================================================================*/
 /* LLM API                                                                         */
 /*================================================================================*/
 #ifndef CONFIG_LLM_API_ENABLE
@@ -281,6 +266,27 @@
     #define CONFIG_LLM_API_TIMEOUT_MS 30000
 #endif
 
+/*==================================================================================*/
+/* 音频设备 — 根据芯片能力自动启用                                                  */
+/*==================================================================================*/
+#ifndef CONFIG_ENABLE_AUDIO_DEVICE
+    #define CONFIG_ENABLE_AUDIO_DEVICE 1
+#endif
+
+#ifndef CONFIG_USE_MAX_98357A
+    #define CONFIG_USE_MAX_98357A 1
+#endif
+
+#ifndef MAX_98357A_USE_SD
+    #define MAX_98357A_USE_SD 1
+#endif 
+
+#ifndef MAX98357A_SINGLE
+    #define MAX98357A_SINGLE 1
+#endif
+/*===================================================================================*/
+
+
 /*================================================================================*/
 /* Service Factory — 工厂模式总开关                                                */
 /*================================================================================*/
@@ -295,3 +301,4 @@
 #ifndef CONFIG_ENABLE_SERVICE_MQTT
     #define CONFIG_ENABLE_SERVICE_MQTT 1
 #endif
+

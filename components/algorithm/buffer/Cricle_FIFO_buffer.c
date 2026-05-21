@@ -1,5 +1,5 @@
 /*循环缓冲区源码*/
-#include "buffer.h"
+#include "m_buffer.h"
 void fifo_init(FIFO_Type_Def*handle,Fifo_Data_type *buf,uint16_t size)
 {
     handle->buf=buf;
@@ -45,6 +45,7 @@ uint16_t fifo_write_block(FIFO_Type_Def*handle, const Fifo_Data_type* p_data, ui
 
 uint16_t fifo_read_block(FIFO_Type_Def*handle, Fifo_Data_type* p_data, uint16_t len)
 {
+    memset(p_data,0,sizeof(p_data));
     uint16_t count=fifo_get_count(handle);
     if(len>count)
     {

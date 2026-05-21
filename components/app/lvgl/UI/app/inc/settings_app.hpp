@@ -12,9 +12,9 @@ public:
     const lv_image_dsc_t* app_icon() const override;
 
     /* ——— LVGL 事件回调（静态成员，可访问 protected 成员） ——— */
-    static void row_focused_cb(lv_event_t* e);
-    static void settings_key_cb(lv_event_t* e);
-    static void settings_click_cb(lv_event_t* e);
+    static void row_focused_cb(lv_event_t* e);//更新焦点高亮
+    static void settings_key_cb(lv_event_t* e);//按键处理
+    static void settings_click_cb(lv_event_t* e);//事件处理
 
     /* ——— defer 用公开转发 ——— */
     void do_enter();

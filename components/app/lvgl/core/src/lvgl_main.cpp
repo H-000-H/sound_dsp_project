@@ -92,7 +92,8 @@ static const struct { int gpio; uint32_t lv_key; } s_key_map[] = {
 
 static void key_gpio_init(void)
 {
-    const uint32_t gpio_pins[] = {
+    const uint32_t gpio_pins[] = 
+    {
         (uint32_t)CONFIG_LVGL_KEY_NEXT_GPIO,
         (uint32_t)CONFIG_LVGL_KEY_PREV_GPIO,
         (uint32_t)CONFIG_LVGL_KEY_ENTER_GPIO,
@@ -116,7 +117,7 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
     static uint32_t last_repeat_ms = 0;
     static int repeat_phase = REPEAT_IDLE;
 
-    int gpio = Button::get_instance().get_pressed_gpio();
+    volatile int gpio = Button::get_instance().get_pressed_gpio();
 
     if (gpio >= 0)
     {
@@ -144,9 +145,8 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
                 return;
             }
 
-            if ((key == LV_KEY_ESC || key == LV_KEY_ENTER) &&
-                (now - press_start_ms) >= KEY_REPEAT_DELAY_MS)
-                {
+            if ((key == LV_KEY_ESC || key == LV_KEY_ENTER) &&(now - press_start_ms) >= KEY_REPEAT_DELAY_MS)
+            {
                 if (repeat_phase == REPEAT_IDLE)
                 {
                     repeat_phase = REPEAT_WAIT_PRESS;
@@ -163,7 +163,9 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
                     {
                         repeat_phase = REPEAT_WAIT_RELEASE;
                         data->state = LV_INDEV_STATE_PRESSED;
-                    } else {
+                    } 
+                    else 
+                    {
                         repeat_phase = REPEAT_WAIT_PRESS;
                         data->state = LV_INDEV_STATE_RELEASED;
                     }
@@ -186,7 +188,9 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
         data->key = last_key;
         was_pressed = false;
         repeat_phase = REPEAT_IDLE;
-    } else {
+    } 
+    else 
+    {
         data->state = LV_INDEV_STATE_RELEASED;
         data->key = 0;
     }
@@ -235,12 +239,12 @@ void lvgl_main()
 
         if (s_defer_fn)
         {
-        auto fn  = s_defer_fn;
-        auto arg = s_defer_arg;
-        s_defer_fn  = nullptr;
-        s_defer_arg = nullptr;
-        fn(arg);
-    }
+            auto fn  = s_defer_fn;
+            auto arg = s_defer_arg;
+            s_defer_fn  = nullptr;
+            s_defer_arg = nullptr;
+            fn(arg);
+        }
 
         vTaskDelay(pdMS_TO_TICKS(2));
     }

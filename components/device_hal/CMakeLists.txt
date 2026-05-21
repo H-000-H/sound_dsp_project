@@ -24,6 +24,8 @@
 
         "serial/src/serial_console.cpp"
 
+        "max98357A/src/max98357a.cpp"
+
     INCLUDE_DIRS
 
         "base/inc"
@@ -48,8 +50,10 @@
 
         "serial/inc"
 
+        "max98357A/inc"
+
     REQUIRES freertos config
 
-    PRIV_REQUIRES bsp driver algorithm esp_driver_uart esp_driver_usb_serial_jtag
+    PRIV_REQUIRES bsp driver algorithm esp_driver_uart esp_driver_usb_serial_jtag chmorgan__esp-libhelix-mp3
 
 )

@@ -35,8 +35,7 @@ bool fifo_write_data(FIFO_Type_Def*handle,Fifo_Data_type data);
 
 /**
  * @环形缓冲区读函数
- * @param p_data为数据所在位置的地址
- * @details false为缓冲区空或者读取失败
+ * @result 返回读取到的缓冲区
  */
 bool fifo_read_data(FIFO_Type_Def*handle,Fifo_Data_type*p_data);
 
@@ -52,6 +51,7 @@ uint16_t fifo_write_block(FIFO_Type_Def*handle, const Fifo_Data_type* p_data, ui
  * @brief 环形缓冲区批量读函数
  * @param p_data 读取数据的存放指针
  * @param len 准备读取的最大长度
+ * @note 会先清空要读取的数据，然后再读取
  * @return 实际成功读取的长度
  */
 uint16_t fifo_read_block(FIFO_Type_Def*handle, Fifo_Data_type* p_data, uint16_t len);

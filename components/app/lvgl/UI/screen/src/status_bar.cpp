@@ -8,7 +8,8 @@ extern "C" { LV_FONT_DECLARE(lv_font_montserrat_20); }
 /*====================================================================*/
 /*  WiFi 图标                                                         */
 /*====================================================================*/
-static struct {
+static struct
+{
     lv_obj_t* label;
     bool       connected;
 } s_wifi = {nullptr, false};
@@ -28,7 +29,8 @@ static void wifi_init(void)
 /*====================================================================*/
 /*  蓝牙图标                                                          */
 /*====================================================================*/
-static struct {
+static struct 
+{
     lv_obj_t* label;
     bool       connected;
 } s_bt = {nullptr, false};
@@ -72,7 +74,8 @@ static void battery_init(void)
 /*====================================================================*/
 /*  音量 — 白色竖条，长按 NEXT/PREV >300ms 调节                     */
 /*====================================================================*/
-static struct {
+static struct 
+{
     lv_obj_t*  cont;
     lv_obj_t*  bar;
     uint32_t   last_tick;
@@ -92,13 +95,16 @@ static void vol_timer_cb(lv_timer_t* t)
     if (!serial_active)
     {
         if (gpio == CONFIG_LVGL_KEY_NEXT_GPIO ||
-            gpio == CONFIG_LVGL_KEY_PREV_GPIO) {
+            gpio == CONFIG_LVGL_KEY_PREV_GPIO)
+            {
             if (gpio != s_last_gpio)
             {
                 s_last_gpio  = gpio;
                 s_press_tick = lv_tick_get();
             }
-        } else {
+        } 
+        else 
+        {
             s_last_gpio = -1;
         }
 
@@ -110,7 +116,8 @@ static void vol_timer_cb(lv_timer_t* t)
                 s_vol.value += 5;
                 if (s_vol.value > 100) s_vol.value = 100;
                 changed = true;
-            } else if (s_last_gpio == CONFIG_LVGL_KEY_PREV_GPIO)
+            } 
+            else if (s_last_gpio == CONFIG_LVGL_KEY_PREV_GPIO)
             {
                 s_vol.value -= 5;
                 if (s_vol.value < 0) s_vol.value = 0;
@@ -127,7 +134,7 @@ static void vol_timer_cb(lv_timer_t* t)
 
         if (!lv_obj_has_flag(s_vol.cont, LV_OBJ_FLAG_HIDDEN) &&
             lv_tick_elaps(s_vol.last_tick) > 2000)
-            {
+        {
             lv_obj_add_flag(s_vol.cont, LV_OBJ_FLAG_HIDDEN);
         }
     }

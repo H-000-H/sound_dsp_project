@@ -31,7 +31,8 @@ extern "C"
 /*====================================================================*/
 /*  应用条目 — 直接使用 AppBase 指针                                  */
 /*====================================================================*/
-struct AppEntry {
+struct AppEntry 
+{
     const char*   name;
     const lv_image_dsc_t* img;
     AppBase*      app;
@@ -42,7 +43,8 @@ extern SettingsImpl g_settings_impl;
 extern MusicImpl    g_music_impl;
 extern SerialImpl   g_serial_impl;
 
-static const AppEntry s_apps[] = {
+static const AppEntry s_apps[] = 
+{
     {"设置",     &icon_settings,      &g_settings_impl},
     {"音乐",     &icon_music,         &g_music_impl},
     {"串口调试", &icon_serial_debug,  &g_serial_impl},
@@ -86,9 +88,11 @@ static void update_highlight()
         {
             lv_obj_set_style_border_color(s_cards[i], lv_color_hex(th_accent()), 0);
             lv_obj_set_style_border_width(s_cards[i], 3, 0);
-            lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);
+            lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);//获取卡片的图标对应的对象
             if (img) lv_obj_set_style_img_recolor_opa(img, LV_OPA_TRANSP, 0);
-        } else {
+        } 
+        else 
+        {
             lv_obj_set_style_border_color(s_cards[i], lv_color_hex(th_border()), 0);
             lv_obj_set_style_border_width(s_cards[i], 1, 0);
             lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);
@@ -106,7 +110,9 @@ static void update_dots()
         {
             lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text()), 0);
             lv_obj_set_size(s_dots[i], 8, 8);
-        } else {
+        } 
+        else 
+        {
             lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text_sec()), 0);
             lv_obj_set_size(s_dots[i], 6, 6);
         }
@@ -119,31 +125,30 @@ static void update_dots()
 static void animate_to(int new_page)
 {
     if (new_page < 0 || new_page >= APP_COUNT) return;
-    if (new_page == s_page || s_animating) return;
-    if (!s_card_row || !lv_obj_is_valid(s_card_row)) return;
+    if (new_page == s_page || s_animating) return;//相同或者正在动画
+    if (!s_card_row || !lv_obj_is_valid(s_card_row)) return;// 对象有效性检查
     s_animating = true;
 
     int cur_x = lv_obj_get_x(s_card_row);
-    bool wrap = (new_page == 0 && s_page == APP_COUNT - 1) ||
-                (new_page == APP_COUNT - 1 && s_page == 0);
+    /*判断是否是第一页和最后一页的切换*/
+    bool wrap = (new_page == 0 && s_page == APP_COUNT - 1) || (new_page == APP_COUNT - 1 && s_page == 0);
     if (wrap)
-    {
+    {/*隐藏中间卡片*/
         for (int i = 1; i < APP_COUNT - 1; i++)
             lv_obj_add_flag(s_cards[i], LV_OBJ_FLAG_HIDDEN);
     }
-
     int tar_x;
-    if (new_page == 0)
+    if (new_page == 0)//第一页左对齐
         tar_x = 0;
     else if (new_page == APP_COUNT - 1)
-        tar_x = CONT_W - (new_page * STEP + CARD_W);
+        tar_x = CONT_W - (new_page * STEP + CARD_W);//右对齐
     else
-        tar_x = CONT_W / 2 - (new_page * STEP + CARD_W / 2);
+        tar_x = CONT_W / 2 - (new_page * STEP + CARD_W / 2);//中间页居中
 
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_card_row);
-    lv_anim_set_exec_cb(&a, [](void* v, int32_t vv) { lv_obj_set_x((lv_obj_t*)v, vv); });
+    lv_anim_set_exec_cb(&a, [](void* v, int32_t vv) { lv_obj_set_x((lv_obj_t*)v, vv); });//每帧回调函数
     lv_anim_set_values(&a, cur_x, tar_x);
     lv_anim_set_duration(&a, 220);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
@@ -241,10 +246,10 @@ static void create_cards()
     lv_obj_t* cont = lv_obj_create(s_screen);
     lv_obj_set_size(cont, CONT_W, CARD_H);
     lv_obj_set_pos(cont, CONT_X, CONT_Y);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);//透明背景
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 0, 0);
-    lv_obj_set_style_clip_corner(cont, true, 0);
+    lv_obj_set_style_clip_corner(cont, true, 0);//启动裁剪超出大小直接裁剪
     lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
 
     s_card_row = lv_obj_create(cont);
@@ -253,7 +258,7 @@ static void create_cards()
     lv_obj_set_style_bg_opa(s_card_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_card_row, 0, 0);
     lv_obj_set_style_pad_all(s_card_row, 0, 0);
-    lv_obj_set_style_layout(s_card_row, LV_LAYOUT_NONE, 0);
+    lv_obj_set_style_layout(s_card_row, LV_LAYOUT_NONE, 0);//手动控制卡片位置
     lv_obj_remove_flag(s_card_row, LV_OBJ_FLAG_SCROLLABLE);
 
     for (int i = 0; i < APP_COUNT; i++)
@@ -342,11 +347,11 @@ void card_menu_show(void)
         {
             int restore_x;
             if (s_page == 0)
-                restore_x = 0;
+                restore_x = 0;//第一页左对齐
             else if (s_page == APP_COUNT - 1)
-                restore_x = CONT_W - (s_page * STEP + CARD_W);
+                restore_x = CONT_W - (s_page * STEP + CARD_W);//最后一页右对齐
             else
-                restore_x = CONT_W / 2 - (s_page * STEP + CARD_W / 2);
+                restore_x = CONT_W / 2 - (s_page * STEP + CARD_W / 2);//居中
             lv_obj_set_x(s_card_row, restore_x);
         }
         update_highlight();

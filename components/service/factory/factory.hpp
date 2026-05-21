@@ -33,6 +33,9 @@
 #if CONFIG_ENABLE_DEVICE_HAL_BLUE
     #include "blue.hpp"
 #endif
+#if CONFIG_USE_MAX_98357A
+    #include "max98357a.hpp"
+#endif
 /**
  * @brief 屏幕驱动通一调用函数
  * @return 各自屏幕驱动实例指针
@@ -262,3 +265,20 @@ namespace factory_config::blue
     }
 #endif
 }
+
+/*=================================================================================*/
+/*以下为音频相关工厂配置*/
+namespace factory_config::audio
+{
+#if CONFIG_ENABLE_AUDIO_DEVICE == 1
+/*   MAX98357A - 启用MAX98357A的SD引脚      */
+    #if CONFIG_USE_MAX_98357A == 1
+        using audio_device = MAX_98357A;
+    #endif
+    inline audio_device* get_audio()
+    {
+        return &audio_device::get_instance();
+    }
+#endif
+}
+/*================================================================================*/

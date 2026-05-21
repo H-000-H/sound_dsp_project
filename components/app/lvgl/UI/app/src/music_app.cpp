@@ -638,11 +638,13 @@ void MusicApp::hide()
 {
     if (m_prog_timer)
     {
-        lv_timer_delete(m_prog_timer); m_prog_timer = nullptr;
+        lv_timer_delete(m_prog_timer);
+        m_prog_timer = nullptr;
     }
     if (m_nav_timer)
     {
-        lv_timer_delete(m_nav_timer);  m_nav_timer  = nullptr;
+        lv_timer_delete(m_nav_timer);  
+        m_nav_timer  = nullptr;
     }
 }
 

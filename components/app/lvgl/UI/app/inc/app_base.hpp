@@ -1,7 +1,8 @@
 #pragma once
 #include "lvgl.h"
 
-class AppBase {
+class AppBase 
+{
 public:
     virtual ~AppBase() = default;
 

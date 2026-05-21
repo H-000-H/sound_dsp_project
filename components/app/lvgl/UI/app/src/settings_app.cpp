@@ -2,12 +2,14 @@
 #include "lvgl_main.hpp"
 #include "theme.hpp"
 
-extern "C" {
+extern "C" 
+{
     LV_FONT_DECLARE(lv_font_montserrat_14);
     LV_FONT_DECLARE(lv_font_montserrat_20);
     LV_FONT_DECLARE(lv_font_custom_16);
 }
 
+/*从转换过来的py里面导入图片*/
 const lv_image_dsc_t* SettingsApp::app_icon() const
 {
     extern const lv_image_dsc_t icon_settings;
@@ -17,11 +19,14 @@ const lv_image_dsc_t* SettingsApp::app_icon() const
 /*====================================================================*/
 /*  工具函数                                                          */
 /*====================================================================*/
+/**
+ * @details 设置左侧小圆点32x32
+ */
 static lv_obj_t* make_round_icon(lv_obj_t* parent, const char* sym, uint32_t color)
 {
     lv_obj_t* circle = lv_obj_create(parent);
     lv_obj_set_size(circle, 32, 32);
-    lv_obj_set_style_radius(circle, 16, 0);
+    lv_obj_set_style_radius(circle, 16, 0);/*设置为圆形圆角16*/
     lv_obj_set_style_bg_color(circle, lv_color_hex(color), 0);
     lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(circle, 0, 0);
@@ -37,6 +42,7 @@ static lv_obj_t* make_round_icon(lv_obj_t* parent, const char* sym, uint32_t col
     return circle;
 }
 
+/*卡片式行*/
 static lv_obj_t* make_row(lv_obj_t* parent)
 {
     lv_obj_t* row = lv_obj_create(parent);
@@ -61,6 +67,7 @@ static void row_label(lv_obj_t* row, const char* text)
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 52, 0);
 }
 
+/*开关的胶囊容器*/
 static lv_obj_t* create_toggle(lv_obj_t* parent)
 {
     lv_obj_t* tog = lv_obj_create(parent);
@@ -73,6 +80,7 @@ static lv_obj_t* create_toggle(lv_obj_t* parent)
     return tog;
 }
 
+/*开关函数*/
 static void update_toggle(lv_obj_t* tog, bool on)
 {
     if (!tog) return;
@@ -80,7 +88,9 @@ static void update_toggle(lv_obj_t* tog, bool on)
     {
         lv_obj_set_style_bg_color(tog, lv_color_hex(0x34C759), 0);
         lv_obj_set_style_bg_opa(tog, LV_OPA_COVER, 0);
-    } else {
+    } 
+    else 
+    {
         lv_obj_set_style_bg_color(tog, lv_color_hex(0xE5E5EA), 0);
         lv_obj_set_style_bg_opa(tog, LV_OPA_COVER, 0);
     }
@@ -105,7 +115,7 @@ static lv_obj_t* create_brightness_bar(lv_obj_t* parent, int val, lv_obj_t** out
     lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 0, 0);
-    lv_obj_set_scroll_dir(cont, LV_DIR_VER);
+    lv_obj_set_scroll_dir(cont, LV_DIR_VER);// 垂直滚动（备用）
     lv_obj_align(cont, LV_ALIGN_RIGHT_MID, -4, 0);
 
     lv_obj_t* bar = lv_bar_create(cont);
@@ -138,17 +148,17 @@ void SettingsApp::row_focused_cb(lv_event_t* e)
 {
     auto* self = static_cast<SettingsApp*>(lv_event_get_user_data(e));
     auto* row = static_cast<lv_obj_t*>(lv_event_get_target(e));
-    for (int i = 0; i < ROW_COUNT; i++)
+    for (int8_t i = 0; i < ROW_COUNT; i++)
     {
         if (self->m_rows[i] == row)
         {
-            int prev = self->m_focus;
-            self->m_focus = i;
+            int prev = self->m_focus;//保存上一个焦点索引
+            self->m_focus = i;//更新索引
             if (prev >= 0 && prev < ROW_COUNT && self->m_rows[prev])
-                lv_obj_set_style_bg_color(self->m_rows[prev], lv_color_hex(th_card()), 0);
+                lv_obj_set_style_bg_color(self->m_rows[prev], lv_color_hex(th_card()), 0);//取消上一个焦点高亮
             if (self->m_rows[i])
-                lv_obj_set_style_bg_color(self->m_rows[i], lv_color_hex(th_card_hl()), 0);
-            lv_obj_scroll_to_view(self->m_rows[self->m_focus], LV_ANIM_ON);
+                lv_obj_set_style_bg_color(self->m_rows[i], lv_color_hex(th_card_hl()), 0);//高亮目前的焦点
+            lv_obj_scroll_to_view(self->m_rows[self->m_focus], LV_ANIM_ON);//滚动到焦点行
             break;
         }
     }
@@ -196,12 +206,14 @@ void SettingsApp::do_enter()
                 auto* s = static_cast<SettingsApp*>(arg);
                 s->on_wifi_toggle(s->m_wifi_on);
             }, this);
-        } else if (m_focus == 1)
+        } 
+        else if (m_focus == 1)
         {
             m_bt_on = !m_bt_on;
             update_toggle(m_togs[1], m_bt_on);
             on_bt_toggle(m_bt_on);
-        } else if (m_focus == 2)
+        } 
+        else if (m_focus == 2)
         {
             m_mqtt_on = !m_mqtt_on;
             update_toggle(m_togs[2], m_mqtt_on);
@@ -210,19 +222,23 @@ void SettingsApp::do_enter()
                 auto* s = static_cast<SettingsApp*>(arg);
                 s->on_mqtt_toggle(s->m_mqtt_on);
             }, this);
-        } else {
+        }
+        else 
+        {
             m_low_pwr_on = !m_low_pwr_on;
             update_toggle(m_togs[3], m_low_pwr_on);
             on_low_power(m_low_pwr_on);
         }
-    } else if (m_focus == 3)
+    } 
+    else if (m_focus == 3)
     {
         m_bright_val += 5;
         if (m_bright_val > 100) m_bright_val = 100;
         lv_bar_set_value(m_bar, m_bright_val, LV_ANIM_ON);
         lv_label_set_text_fmt(m_bright_lbl, "%d%%", m_bright_val);
         on_brightness(m_bright_val);
-    } else if (m_focus == 5)
+    } 
+    else if (m_focus == 5)
     {
         m_theme_dark = !m_theme_dark;
         update_toggle(m_togs[4], m_theme_dark);
@@ -248,7 +264,9 @@ void SettingsApp::do_esc()
         lv_bar_set_value(m_bar, m_bright_val, LV_ANIM_ON);
         lv_label_set_text_fmt(m_bright_lbl, "%d%%", m_bright_val);
         on_brightness(m_bright_val);
-    } else {
+    } 
+    else 
+    {
         extern void card_menu_show(void);
         lv_async_call([](void*) { card_menu_show(); }, nullptr);
     }
