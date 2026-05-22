@@ -1,5 +1,5 @@
 #include "status_bar.hpp"
-#include "button.hpp"
+#include "key_input.hpp"
 #include "theme.hpp"
 #include "ui/app/inc/serial_app.hpp"
 
@@ -86,7 +86,7 @@ int ui_get_volume(void) { return s_vol.value; }
 
 static void vol_timer_cb(lv_timer_t* t)
 {
-    int gpio = Button::get_instance().get_pressed_gpio();
+    int gpio = KeyInput::getInstance().get_pressed_gpio();
     bool serial_active = serial_debug_screen_is_active();
 
     static int      s_last_gpio   = -1;
@@ -94,8 +94,8 @@ static void vol_timer_cb(lv_timer_t* t)
 
     if (!serial_active)
     {
-        if (gpio == CONFIG_LVGL_KEY_NEXT_GPIO ||
-            gpio == CONFIG_LVGL_KEY_PREV_GPIO)
+        if (gpio == KeyInput::getGpioNext() ||
+            gpio == KeyInput::getGpioPrev())
             {
             if (gpio != s_last_gpio)
             {
@@ -111,13 +111,13 @@ static void vol_timer_cb(lv_timer_t* t)
         bool changed = false;
         if (s_last_gpio >= 0 && lv_tick_elaps(s_press_tick) > 300)
         {
-            if (s_last_gpio == CONFIG_LVGL_KEY_NEXT_GPIO)
+            if (s_last_gpio == KeyInput::getGpioNext())
             {
                 s_vol.value += 5;
                 if (s_vol.value > 100) s_vol.value = 100;
                 changed = true;
             } 
-            else if (s_last_gpio == CONFIG_LVGL_KEY_PREV_GPIO)
+            else if (s_last_gpio == KeyInput::getGpioPrev())
             {
                 s_vol.value -= 5;
                 if (s_vol.value < 0) s_vol.value = 0;

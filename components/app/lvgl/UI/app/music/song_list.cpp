@@ -1,4 +1,4 @@
-﻿#include "button.hpp"
+﻿#include "key_input.hpp"
 #include "theme.hpp"
 #include "song_list.hpp"
 #include "ui/nav/inc/card_menu.hpp"
@@ -7,10 +7,10 @@ extern "C" {
     LV_FONT_DECLARE(lv_font_custom_16);
 }
 
-#define GPIO_NEXT  CONFIG_LVGL_KEY_NEXT_GPIO
-#define GPIO_PREV  CONFIG_LVGL_KEY_PREV_GPIO
-#define GPIO_ENTER CONFIG_LVGL_KEY_ENTER_GPIO
-#define GPIO_ESC   CONFIG_LVGL_KEY_ESC_GPIO
+#define GPIO_NEXT  KeyInput::getGpioNext()
+#define GPIO_PREV  KeyInput::getGpioPrev()
+#define GPIO_ENTER KeyInput::getGpioEnter()
+#define GPIO_ESC   KeyInput::getGpioEsc()
 
 /* 全局实例 + 包装函数 */
 SongListPage g_song_list;
@@ -131,7 +131,7 @@ void SongListPage::song_list_nav_timer_cb(lv_timer_t* t)
     if (!self || !self->m_screen) return;
     if (lv_screen_active() != self->m_screen) return;
 
-    int gpio = Button::get_instance().get_pressed_gpio();
+    int gpio = KeyInput::getInstance().get_pressed_gpio();
     if (gpio < 0)
     {
         self->m_pending_enter = false;

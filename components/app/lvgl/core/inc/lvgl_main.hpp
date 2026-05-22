@@ -5,7 +5,6 @@
 #include "tool_config.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "factory.hpp"
 #include "esp_heap_caps.h"
 
 constexpr uint16_t screen_width = 240;

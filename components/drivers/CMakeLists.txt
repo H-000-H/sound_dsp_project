@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "display/st7789_driver.c"
+        "audio/max98357a_driver.c"
+        "input/gpio_key_driver.c"
+        "led/ws2812_driver.c"
+    INCLUDE_DIRS
+        "display/inc"
+        "audio/inc"
+        "input/inc"
+        "led/inc"
+    REQUIRES
+        board
+        hw_hal
+        freertos
+    PRIV_REQUIRES
+        esp_timer
+)

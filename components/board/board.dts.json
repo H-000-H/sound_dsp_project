@@ -1,0 +1,89 @@
+{
+  "compatible": "sound-dsp,esp32s3-board",
+  "model": "sound_dsp_board_v1",
+  "aliases": {
+    "display0": "lcd0",
+    "audio0": "speaker_amp0",
+    "input0": "buttons0"
+  },
+  "devices": [
+    {
+      "name": "spi2",
+      "compatible": "esp32,spi-bus",
+      "properties": {
+        "mosi": 5,
+        "miso": -1,
+        "sclk": 4,
+        "dma_chan": -1
+      }
+    },
+    {
+      "name": "lcd0",
+      "compatible": "sitronix,st7789",
+      "depends_on": "spi2",
+      "properties": {
+        "dc": 6,
+        "reset": 7,
+        "backlight": 15,
+        "spi_freq_hz": 80000000,
+        "width": 240,
+        "height": 240,
+        "bl_active_high": 1
+      }
+    },
+    {
+      "name": "i2s_audio0",
+      "compatible": "esp32,i2s-bus",
+      "properties": {
+        "ws": 13,
+        "bclk": 12,
+        "dout": 11,
+        "din": -1,
+        "sample_rate": 44100,
+        "bits_per_sample": 16
+      }
+    },
+    {
+      "name": "speaker_amp0",
+      "compatible": "maxim,max98357a",
+      "depends_on": "i2s_audio0",
+      "properties": {
+        "sdn_pin": 10,
+        "active_level": 1
+      }
+    },
+    {
+      "name": "buttons0",
+      "compatible": "gpio-keys",
+      "properties": {
+        "next_pin": 16,
+        "prev_pin": 17,
+        "enter_pin": 3,
+        "esc_pin": 46,
+        "debounce_ms": 50
+      }
+    },
+    {
+      "name": "rgb_led0",
+      "compatible": "worldsemi,ws2812",
+      "properties": {
+        "gpio": 48,
+        "led_count": 1,
+        "brightness": 28,
+        "rmt_resolution_hz": 10000000
+      }
+    },
+    {
+      "name": "uart_debug",
+      "compatible": "esp32,uart",
+      "properties": {
+        "tx_pin": 43,
+        "rx_pin": 44,
+        "baud_rate": 115200,
+        "data_bits": 8,
+        "stop_bits": 1,
+        "parity": 0
+      }
+    }
+  ]
+}

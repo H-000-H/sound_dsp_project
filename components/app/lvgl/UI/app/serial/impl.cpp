@@ -1,9 +1,12 @@
 #include "serial_app.hpp"
-#include "serial_console.hpp"
+#include "device.h"
+#include "hal_uart.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include <cstdarg>
 #include "esp_attr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 extern "C" { LV_FONT_DECLARE(lv_font_custom_16); }
 
@@ -16,7 +19,7 @@ SerialImpl g_serial_impl;
 static constexpr int MAX_STORED = 512;
 static constexpr int LINE_SZ    = 128;
 
-struct StoredLine 
+struct StoredLine
 {
     uint32_t color;
     char     text[LINE_SZ];
@@ -31,6 +34,10 @@ int s_scroll_offset = 0;
 
 /* 跟踪上次渲染的环形状态，避免不必要的重绘 */
 static int s_last_rendered_head = -1;
+
+/* UART 句柄（替换旧的 SerialConsole） */
+static hal_uart_t s_uart;
+static bool s_uart_inited = false;
 
 static int s_stored_count()
 {
@@ -69,10 +76,10 @@ static void push_line(uint32_t color, const char* str, int len)
         s_stored_tail = (s_stored_tail + 1) % MAX_STORED;
 }
 
-/* 指向 esp_log_set_vprintf 之前的原始输出函数（用于 USB TX） */
+/* 指向 esp_log_set_vprintf 之前的原始输出函数（用于 UART TX） */
 static vprintf_like_t s_orig_vprintf = nullptr;
 
-/* ESP-IDF 日志钩子 -> 先送原始输出（USB TX），再捕获一份给屏幕显示 */
+/* ESP-IDF 日志钩子 -> 先送原始输出（UART TX），再捕获一份给屏幕显示 */
 static int log_vprintf(const char* fmt, va_list args)
 {
     int ret = 0;
@@ -112,23 +119,11 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
     if (!app || !app->m_output) return;
     if (lv_screen_active() != app->screen()) return;
 
-    /* 轮询 USB 连接状态 */
-    auto& console = SerialConsole::get_instance();
-    if (console.is_active()) 
-    {
-        console.poll_connection();
-        bool was_connected = app->m_connected;
-        app->m_connected = console.is_connected();
-        if (was_connected != app->m_connected)
-        {
-            app->update_display();
-        }
-    }
-    /* 从 SerialConsole 读取 USB RX 数据 -> s_stored */
-    if (console.is_active())
+    /* 从 UART 读取数据 -> s_stored */
+    if (s_uart_inited)
     {
         uint8_t buf[256];
-        size_t n = console.read(buf, sizeof(buf) - 1);
+        int n = s_uart.read(&s_uart, buf, sizeof(buf) - 1, 100);
         if (n > 0)
         {
             if (app->m_term_mode == 1)
@@ -136,14 +131,14 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
                 /* HEX 模式：将收到的字节按固定宽度格式化为十六进制文本 */
                 static uint8_t s_hex_buf[16];
                 static int s_hex_cnt = 0;
-                for (size_t i = 0; i < n; i++) 
+                for (int i = 0; i < n; i++)
                 {
                     s_hex_buf[s_hex_cnt++] = buf[i];
-                    if (s_hex_cnt == 16) 
+                    if (s_hex_cnt == 16)
                     {
                         char hex_line[LINE_SZ];
                         int pos = 0;
-                        for (int j = 0; j < 16; j++) 
+                        for (int j = 0; j < 16; j++)
                         {
                             pos += snprintf(hex_line + pos, sizeof(hex_line) - pos, "%02X ", s_hex_buf[j]);
                         }
@@ -156,13 +151,13 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
                 /* 终端模式：按行解析，根据前缀着色 */
                 int line_start = 0;
                 uint32_t last_color = 0x59D0FF;
-                for (size_t i = 0; i < n; i++)
+                for (int i = 0; i < n; i++)
                 {
-                    if (buf[i] == '\n' || buf[i] == '\r') 
+                    if (buf[i] == '\n' || buf[i] == '\r')
                     {
-                        if ((int)i > line_start)
+                        if (i > line_start)
                         {
-                            int seg_len = (int)(i - line_start);
+                            int seg_len = i - line_start;
                             uint32_t seg_color = color_by_prefix((const char*)(buf + line_start), seg_len);
                             if (seg_color == 0x59D0FF && (buf[line_start] < 'A' || buf[line_start] > 'Z'))
                                 seg_color = last_color;
@@ -170,12 +165,12 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
                                 last_color = seg_color;
                             push_line(seg_color, (const char*)(buf + line_start), seg_len);
                         }
-                        line_start = (int)(i + 1);
+                        line_start = i + 1;
                     }
                 }
-                if (line_start < (int)n)
+                if (line_start < n)
                 {
-                    int seg_len = (int)(n - line_start);
+                    int seg_len = n - line_start;
                     uint32_t seg_color = color_by_prefix((const char*)(buf + line_start), seg_len);
                     if (seg_color == 0x59D0FF && (buf[line_start] < 'A' || buf[line_start] > 'Z'))
                         seg_color = last_color;
@@ -191,7 +186,7 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
 
     /* 删除所有旧的 span */
     uint32_t old_cnt = lv_spangroup_get_span_count(app->m_output);
-    for (uint32_t i = 0; i < old_cnt; i++) 
+    for (uint32_t i = 0; i < old_cnt; i++)
     {
         lv_span_t* s = lv_spangroup_get_child(app->m_output, 0);
         if (s) lv_spangroup_delete_span(app->m_output, s);
@@ -245,25 +240,57 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
 /* ==================================================================== */
 /*  impl 实现 - 由 SerialApp::show() 调用                   */
 /* ==================================================================== */
+
+static void uart_init_from_device(void)
+{
+    hal_uart_init_struct(&s_uart);
+
+    device_t* dev = device_find("uart_debug");
+
+    hal_uart_config_t cfg;
+    cfg.tx_pin     = 43;
+    cfg.rx_pin     = 44;
+    cfg.rts_pin    = -1;
+    cfg.cts_pin    = -1;
+    cfg.baud_rate  = 115200;
+    cfg.data_bits  = 8;
+    cfg.stop_bits  = 1;
+    cfg.parity     = 0;
+
+    if (dev)
+    {
+        device_get_prop_int(dev, "tx_pin",    &cfg.tx_pin);
+        device_get_prop_int(dev, "rx_pin",    &cfg.rx_pin);
+        device_get_prop_int(dev, "baud_rate", &cfg.baud_rate);
+        device_get_prop_int(dev, "data_bits", &cfg.data_bits);
+        device_get_prop_int(dev, "stop_bits", &cfg.stop_bits);
+        device_get_prop_int(dev, "parity",    &cfg.parity);
+    }
+
+    s_uart.init(&s_uart, &cfg);
+    s_uart_inited = true;
+}
+
 void SerialImpl::start_serial()
 {
-    auto& console = SerialConsole::get_instance();
-    if (!console.is_active())
-        console.init(-1, -1, BAUD_RATES[m_baud_idx]);
+    if (!s_uart_inited)
+    {
+        uart_init_from_device();
+    }
 
     /* 挂钩 ESP-IDF 日志：原始输出路径不变，另捕获一份给屏幕 */
     s_orig_vprintf = esp_log_set_vprintf(log_vprintf);
 
-    m_connected = console.is_active();
+    m_connected = s_uart_inited;
     update_display();
 }
 
 void SerialImpl::stop_serial()
 {
-    auto& console = SerialConsole::get_instance();
-    if (console.is_active())
+    if (s_uart_inited)
     {
-        console.deinit();
+        s_uart.deinit(&s_uart);
+        s_uart_inited = false;
     }
     /* 恢复原始输出函数 */
     if (s_orig_vprintf)
@@ -280,14 +307,34 @@ void SerialImpl::stop_serial()
 
 void SerialImpl::on_baud_change(int idx)
 {
-    auto& console = SerialConsole::get_instance();
-    if (console.is_active())
+    if (s_uart_inited)
     {
-        console.deinit();
+        s_uart.deinit(&s_uart);
         vTaskDelay(pdMS_TO_TICKS(50));
-        console.init(-1, -1, BAUD_RATES[idx]);
+
+        device_t* dev = device_find("uart_debug");
+        hal_uart_config_t cfg;
+        cfg.tx_pin     = 43;
+        cfg.rx_pin     = 44;
+        cfg.rts_pin    = -1;
+        cfg.cts_pin    = -1;
+        cfg.baud_rate  = BAUD_RATES[idx];
+        cfg.data_bits  = 8;
+        cfg.stop_bits  = 1;
+        cfg.parity     = 0;
+
+        if (dev)
+        {
+            device_get_prop_int(dev, "tx_pin",    &cfg.tx_pin);
+            device_get_prop_int(dev, "rx_pin",    &cfg.rx_pin);
+            device_get_prop_int(dev, "data_bits", &cfg.data_bits);
+            device_get_prop_int(dev, "stop_bits", &cfg.stop_bits);
+            device_get_prop_int(dev, "parity",    &cfg.parity);
+        }
+
+        s_uart.init(&s_uart, &cfg);
     }
-    m_connected = console.is_active();
+    m_connected = s_uart_inited;
     update_display();
 }
 

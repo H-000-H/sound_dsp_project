@@ -1,7 +1,11 @@
 #include "lvgl_main.hpp"
 #include "esp_heap_caps.h"
-#include "config.hpp"
-#include "button.hpp"
+
+#include "device.h"
+#include "gpio_key_driver.h"
+#include "key_input.hpp"
+#include "st7789_driver.h"
+
 #include "ui/screen/inc/status_bar.hpp"
 #include "ui/screen/inc/lock_screen.hpp"
 #include "ui/screen/inc/gear_page.hpp"
@@ -19,15 +23,15 @@ void lvgl_defer(void (*fn)(void*), void* arg)
 }
 /*====================================================================*/
 
+static device_t* s_lcd_dev = nullptr;
+
 static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
 {
-    DisplayDevice* screen = factory_config::screen::get_device();
-    if (screen)
+    if (s_lcd_dev)
     {
-        uint32_t width  = (area->x2 - area->x1) + 1;
-        uint32_t height = (area->y2 - area->y1) + 1;
-        screen->draw_bitmap(area->x1, area->y1, area->x2, area->y2,
-                           (uint16_t*)px_map, (width * height));
+        int w = area->x2 - area->x1 + 1;
+        int h = area->y2 - area->y1 + 1;
+        st7789_write_ram(s_lcd_dev, area->x1, area->y1, w, h, (const uint16_t*)px_map);
     }
     lv_disp_flush_ready(disp);
 }
@@ -82,25 +86,20 @@ static void lv_tick_init()
     esp_timer_start_periodic(timer_handle, 2000);
 }
 
-/* 按键映射表 */
-static const struct { int gpio; uint32_t lv_key; } s_key_map[] = {
-    {CONFIG_LVGL_KEY_NEXT_GPIO,  LV_KEY_NEXT},
-    {CONFIG_LVGL_KEY_PREV_GPIO,  LV_KEY_PREV},
-    {CONFIG_LVGL_KEY_ENTER_GPIO, LV_KEY_ENTER},
-    {CONFIG_LVGL_KEY_ESC_GPIO,   LV_KEY_ESC},
-};
+/* ── 按键映射: 从 DeviceTree 读取 GPIO 编号 ── */
+#define KEY_MAP_COUNT 4
+static struct { int gpio; uint32_t lv_key; } s_key_map[KEY_MAP_COUNT];
 
-static void key_gpio_init(void)
+static void key_map_init(void)
 {
-    const uint32_t gpio_pins[] = 
-    {
-        (uint32_t)CONFIG_LVGL_KEY_NEXT_GPIO,
-        (uint32_t)CONFIG_LVGL_KEY_PREV_GPIO,
-        (uint32_t)CONFIG_LVGL_KEY_ENTER_GPIO,
-        (uint32_t)CONFIG_LVGL_KEY_ESC_GPIO,
-    };
-    size_t count = sizeof(gpio_pins) / sizeof(gpio_pins[0]);
-    Button::get_instance().init(gpio_pins, count);
+    device_t* btn_dev = device_find("buttons0");
+    if (!btn_dev) return;
+
+    /* 顺序必须与 gpio_key_driver 内部一致: 0=next 1=prev 2=enter 3=esc */
+    device_get_prop_int(btn_dev, "next_pin",  &s_key_map[0].gpio); s_key_map[0].lv_key = LV_KEY_NEXT;
+    device_get_prop_int(btn_dev, "prev_pin",  &s_key_map[1].gpio); s_key_map[1].lv_key = LV_KEY_PREV;
+    device_get_prop_int(btn_dev, "enter_pin", &s_key_map[2].gpio); s_key_map[2].lv_key = LV_KEY_ENTER;
+    device_get_prop_int(btn_dev, "esc_pin",   &s_key_map[3].gpio); s_key_map[3].lv_key = LV_KEY_ESC;
 }
 
 /* 长按自动重复 */
@@ -117,12 +116,12 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
     static uint32_t last_repeat_ms = 0;
     static int repeat_phase = REPEAT_IDLE;
 
-    volatile int gpio = Button::get_instance().get_pressed_gpio();
+    int gpio = KeyInput::getInstance().get_pressed_gpio();
 
     if (gpio >= 0)
     {
         uint32_t key = 0;
-        for (size_t i = 0; i < sizeof(s_key_map) / sizeof(s_key_map[0]); i++)
+        for (size_t i = 0; i < KEY_MAP_COUNT; i++)
         {
             if (s_key_map[i].gpio == gpio)
             {
@@ -145,7 +144,7 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
                 return;
             }
 
-            if ((key == LV_KEY_ESC || key == LV_KEY_ENTER) &&(now - press_start_ms) >= KEY_REPEAT_DELAY_MS)
+            if ((key == LV_KEY_ESC || key == LV_KEY_ENTER) && (now - press_start_ms) >= KEY_REPEAT_DELAY_MS)
             {
                 if (repeat_phase == REPEAT_IDLE)
                 {
@@ -163,8 +162,8 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
                     {
                         repeat_phase = REPEAT_WAIT_RELEASE;
                         data->state = LV_INDEV_STATE_PRESSED;
-                    } 
-                    else 
+                    }
+                    else
                     {
                         repeat_phase = REPEAT_WAIT_PRESS;
                         data->state = LV_INDEV_STATE_RELEASED;
@@ -188,8 +187,8 @@ static void key_board_cb(lv_indev_t* indev, lv_indev_data_t* data)
         data->key = last_key;
         was_pressed = false;
         repeat_phase = REPEAT_IDLE;
-    } 
-    else 
+    }
+    else
     {
         data->state = LV_INDEV_STATE_RELEASED;
         data->key = 0;
@@ -210,13 +209,16 @@ static void lv_indev_init(lv_display_t* display)
 
 void lvgl_main()
 {
-    DisplayDevice* screen = factory_config::screen::get_device();
-    if (screen) screen->init();
+    /* ── 查找显示设备并初始化 ── */
+    s_lcd_dev = device_find("lcd0");
+    if (s_lcd_dev) st7789_init(s_lcd_dev);
+
+    /* ── 初始化按键映射 ── */
+    key_map_init();
 
     lvgl_mutex_init();
     lv_tick_init();
     lvgl_display_init();
-    key_gpio_init();
 
     lv_display_t* display = lv_display_get_default();
     lv_indev_init(display);
@@ -231,7 +233,7 @@ void lvgl_main()
 
     while (true)
     {
-        Button::get_instance().process(0);
+        KeyInput::getInstance().process(0);
 
         lvgl_mutex_lock();
         lv_timer_handler();
@@ -249,4 +251,3 @@ void lvgl_main()
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
-

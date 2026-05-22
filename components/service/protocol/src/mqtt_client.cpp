@@ -1,46 +1,71 @@
 #include "mqtt_client.hpp"
 #if CONFIG_ENABLE_SERVICE_MQTT
 
-extern "C"
-{
-#include "bsp_mqtt.h"
-}
-
 #include <cstring>
+
+#include "esp_log.h"
+#include "mqtt_client.h"
 
 struct MqttClient::Impl
 {
-    bsp_mqtt_handle_t handle = {};
+    esp_mqtt_client_handle_t client = nullptr;
+    bool is_connected = false;
+    MqttConfig cfg;
 };
 
-static MqttEvent convert_event(bsp_mqtt_event_t event)
+static const char* kTag = "MqttClient";
+
+static MqttEvent convert_event(esp_mqtt_event_id_t id)
 {
-    switch (event)
+    switch (id)
     {
-        case BSP_MQTT_EVENT_CONNECTED: return MqttEvent::Connected;
-        case BSP_MQTT_EVENT_DISCONNECTED: return MqttEvent::Disconnected;
-        case BSP_MQTT_EVENT_SUBSCRIBED: return MqttEvent::Subscribed;
-        case BSP_MQTT_EVENT_UNSUBSCRIBED: return MqttEvent::Unsubscribed;
-        case BSP_MQTT_EVENT_PUBLISHED: return MqttEvent::Published;
-        case BSP_MQTT_EVENT_RXDATA: return MqttEvent::ReceivedData;
-        case BSP_MQTT_EVENT_ERROR: return MqttEvent::Error;
-        default: return MqttEvent::Error;
+        case MQTT_EVENT_CONNECTED:    return MqttEvent::Connected;
+        case MQTT_EVENT_DISCONNECTED: return MqttEvent::Disconnected;
+        case MQTT_EVENT_SUBSCRIBED:   return MqttEvent::Subscribed;
+        case MQTT_EVENT_UNSUBSCRIBED: return MqttEvent::Unsubscribed;
+        case MQTT_EVENT_PUBLISHED:    return MqttEvent::Published;
+        case MQTT_EVENT_DATA:         return MqttEvent::ReceivedData;
+        case MQTT_EVENT_ERROR:        return MqttEvent::Error;
+        default:                      return MqttEvent::Error;
     }
 }
 
-static void bsp_mqtt_event_bridge(bsp_mqtt_event_t event, const char* topic, const uint8_t* data, uint16_t len, void* user_ctx)
+static void mqtt_event_handler(void* handler_args, esp_event_base_t base, int32_t event_id, void* event_data)
 {
-    auto* self = static_cast<MqttClient*>(user_ctx);
-    if (!self)
+    (void)base;
+    auto* self = static_cast<MqttClient*>(handler_args);
+    if (!self) return;
+
+    auto* event = static_cast<esp_mqtt_event_handle_t>(event_data);
+
+    if (event_id == MQTT_EVENT_CONNECTED)
     {
-        return;
+        self->dispatch_event(MqttEvent::Connected, nullptr, nullptr, 0);
     }
-    self->dispatch_event(convert_event(event), topic ? topic : "", data, len);
+    else if (event_id == MQTT_EVENT_DISCONNECTED)
+    {
+        self->dispatch_event(MqttEvent::Disconnected, nullptr, nullptr, 0);
+    }
+    else if (event_id == MQTT_EVENT_DATA)
+    {
+        char topic_buf[256] = {};
+        int tlen = event->topic_len < (int)sizeof(topic_buf) - 1 ? event->topic_len : (int)sizeof(topic_buf) - 1;
+        memcpy(topic_buf, event->topic, tlen);
+        topic_buf[tlen] = '\0';
+        self->dispatch_event(MqttEvent::ReceivedData, topic_buf, (const uint8_t*)event->data, event->data_len);
+    }
+    else if (event_id == MQTT_EVENT_ERROR)
+    {
+        ESP_LOGW(kTag, "MQTT error, type=%d", event->error_handle ? event->error_handle->error_type : -1);
+        self->dispatch_event(MqttEvent::Error, nullptr, nullptr, 0);
+    }
+    else
+    {
+        self->dispatch_event(convert_event((esp_mqtt_event_id_t)event_id), nullptr, nullptr, 0);
+    }
 }
 
-MqttClient::MqttClient() : m_impl(new Impl)
-{
-}
+MqttClient::MqttClient() : m_impl(new Impl) {}
 
 MqttClient::~MqttClient()
 {
@@ -55,68 +80,72 @@ MqttClient& MqttClient::get_instance()
 
 void MqttClient::set_config(const MqttConfig& cfg)
 {
-    memset(&m_impl->handle.cfg, 0, sizeof(m_impl->handle.cfg));
-    if (cfg.broker_uri)
-    {
-        strncpy(m_impl->handle.cfg.broker_uri, cfg.broker_uri, sizeof(m_impl->handle.cfg.broker_uri) - 1);
-    }
-    if (cfg.client_id)
-    {
-        strncpy(m_impl->handle.cfg.client_id, cfg.client_id, sizeof(m_impl->handle.cfg.client_id) - 1);
-    }
-    if (cfg.username)
-    {
-        strncpy(m_impl->handle.cfg.username, cfg.username, sizeof(m_impl->handle.cfg.username) - 1);
-    }
-    if (cfg.password)
-    {
-        strncpy(m_impl->handle.cfg.password, cfg.password, sizeof(m_impl->handle.cfg.password) - 1);
-    }
-    m_impl->handle.cfg.keepalive_seconds = cfg.keepalive_seconds;
+    m_impl->cfg = cfg;
 }
 
 void MqttClient::init(event_callback_t cb, void* user_ctx)
 {
-    if (m_inited) return;  /* 防止重复 init 泄漏 */
+    if (m_inited) return;
     m_user_cb = cb;
     m_user_ctx = user_ctx;
-    bsp_mqtt_init(&m_impl->handle, bsp_mqtt_event_bridge, this);
+
+    esp_mqtt_client_config_t mqtt_cfg = {};
+    mqtt_cfg.broker.address.uri = m_impl->cfg.broker_uri;
+    mqtt_cfg.credentials.client_id = m_impl->cfg.client_id;
+    mqtt_cfg.credentials.username = m_impl->cfg.username;
+    mqtt_cfg.credentials.authentication.password = m_impl->cfg.password;
+    mqtt_cfg.session.keepalive = m_impl->cfg.keepalive_seconds;
+
+    m_impl->client = esp_mqtt_client_init(&mqtt_cfg);
+    if (m_impl->client)
+    {
+        esp_mqtt_client_register_event(m_impl->client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, this);
+    }
     m_inited = true;
 }
 
 void MqttClient::connect()
 {
-    bsp_mqtt_connect(&m_impl->handle);
+    if (!m_impl->client) return;
+    esp_mqtt_client_start(m_impl->client);
 }
 
 void MqttClient::disconnect()
 {
-    bsp_mqtt_disconnect(&m_impl->handle);
+    if (!m_impl->client) return;
+    esp_mqtt_client_stop(m_impl->client);
+    esp_mqtt_client_destroy(m_impl->client);
+    m_impl->client = nullptr;
     m_inited = false;
 }
 
 bool MqttClient::is_connected() const
 {
-    return bsp_mqtt_is_connected(&m_impl->handle);
+    return m_impl->is_connected;
 }
 
 int MqttClient::publish(const char* topic, const uint8_t* data, uint16_t len, uint8_t qos)
 {
-    return bsp_mqtt_publish(&m_impl->handle, topic, data, len, qos);
+    if (!m_impl->client) return -1;
+    return esp_mqtt_client_publish(m_impl->client, topic, (const char*)data, len, qos, 0);
 }
 
 int MqttClient::subscribe(const char* topic, uint8_t qos)
 {
-    return bsp_mqtt_subscribe(&m_impl->handle, topic, qos);
+    if (!m_impl->client) return -1;
+    return esp_mqtt_client_subscribe(m_impl->client, topic, qos);
 }
 
 int MqttClient::unsubscribe(const char* topic)
 {
-    return bsp_mqtt_unsubscribe(&m_impl->handle, topic);
+    if (!m_impl->client) return -1;
+    return esp_mqtt_client_unsubscribe(m_impl->client, topic);
 }
 
 void MqttClient::dispatch_event(MqttEvent event, const char* topic, const uint8_t* data, uint16_t len)
 {
+    if (event == MqttEvent::Connected)   m_impl->is_connected = true;
+    if (event == MqttEvent::Disconnected) m_impl->is_connected = false;
     if (m_user_cb)
     {
         m_user_cb(event, topic, data, len, m_user_ctx);

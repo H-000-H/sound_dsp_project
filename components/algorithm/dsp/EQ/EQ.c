@@ -7,7 +7,7 @@
 /* 将 double 转为 Q(31-shift) 定点，带饱和 */
 static int32_t double_to_q31(double val, int shift)
 {
-    if(shift>31) return;
+    if(shift>31) return 0;
     double scaled = val * (int64_t)(1u << (31 - shift));
     if (scaled >= 0x7FFFFFFF)  return 0x7FFFFFFF;
     if (scaled <= (int32_t)0x80000000) return (int32_t)0x80000000;
@@ -130,7 +130,6 @@ void Peaking_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, int
     double cos_w = cos(w0);
     double sin_w = sin(w0);
     double A     = pow(10.0, gain_db / 40.0);
-    double sqrtA = sqrt(A);
     double alpha = sin_w / (2.0 * Q);
 
     double b0 = 1 + alpha * A;
@@ -179,8 +178,6 @@ void Low_Pass_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, in
     double w0    = 2.0 * M_PI * f0 / fs;
     double cos_w = cos(w0);
     double sin_w = sin(w0);
-    double A     = pow(10.0, gain_db / 40.0);
-    double sqrtA = sqrt(A);
     double alpha = sin_w / (2.0 * Q);
 
     double b0 = (1 - cos_w) / 2;
@@ -229,8 +226,6 @@ void High_Pass_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, i
     double w0    = 2.0 * M_PI * f0 / fs;
     double cos_w = cos(w0);
     double sin_w = sin(w0);
-    double A     = pow(10.0, gain_db / 40.0);
-    double sqrtA = sqrt(A);
     double alpha = sin_w / (2.0 * Q);
 
     double b0 = (1 + cos_w) / 2;
@@ -279,8 +274,6 @@ void Band_Pass_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, i
     double w0    = 2.0 * M_PI * f0 / fs;
     double cos_w = cos(w0);
     double sin_w = sin(w0);
-    double A     = pow(10.0, gain_db / 40.0);
-    double sqrtA = sqrt(A);
     double alpha = sin_w / (2.0 * Q);
 
     double b0 = alpha;
@@ -361,8 +354,99 @@ void filter_process(filter_config_t *f,const int32_t *in, int32_t *out, uint32_t
     f->y1 = y1;  f->y2 = y2;
 }
 
+void set_filter(filter_classfiy type, uint32_t f0, uint32_t Q, int32_t gain_db)
+{
+    uint32_t fs = filter->config.fs;
+    switch(type) {
+        case EQ_PEAK:       Peaking_filter(&filter->config, fs, f0, Q, gain_db); break;
+        case EQ_HIGH_SHELF: high_shelf_filter(&filter->config, fs, f0, Q, gain_db); break;
+        case EQ_LOW_SHELF:  Low_shelf_filter(&filter->config, fs, f0, Q, gain_db); break;
+        case EQ_LOW_PASS:   Low_Pass_filter(&filter->config, fs, f0, Q, gain_db); break;
+        case EQ_HIGH_PASS:  High_Pass_filter(&filter->config, fs, f0, Q, gain_db); break;
+        case EQ_BAND_PASS:  Band_Pass_filter(&filter->config, fs, f0, Q, gain_db); break;
+        default: return;
+    }
+}
+
 void filter_clear(filter_config_t *f)
 {
     f->x1 = f->x2 = 0;
     f->y1 = f->y2 = 0;
 }
+
+void set_audio_volume(float v)
+{
+    if(v < 0.0f) v = 0.0f;
+    if(v > 1.0f) v = 1.0f;
+    volume->target_volume_q15 = (int32_t)(v * 32768.0f);
+    if(volume->target_volume_q15 > 0x7FFF) volume->target_volume_q15 = 0x7FFF;
+    volume->flag_change = true;
+}
+
+void process_audio_volume(int16_t* buffer, uint32_t sample_count)
+{
+    int32_t cur = volume->current_volume_q15;
+    int32_t tgt = volume->target_volume_q15;
+
+    for(uint32_t i = 0; i < sample_count; i++)
+    {
+        /* 一阶平滑: cur += (tgt - cur) * ALPHA_Q15 / 32768 */
+        int32_t diff = tgt - cur;
+        cur += (diff * VOLUME_SMOOTH_ALPHA_Q15) >> 15;
+
+        /* 应用音量: out = sample * cur / 32768 */
+        int32_t sample = ((int32_t)buffer[i] * cur) >> 15;
+
+        /* 饱和裁剪 */
+        if(sample > INT16_MAX) sample = INT16_MAX;
+        if(sample < INT16_MIN) sample = INT16_MIN;
+        buffer[i] = (int16_t)sample;
+    }
+
+    if(cur == tgt) volume->flag_change = false;
+    volume->current_volume_q15 = cur;
+}
+
+/* ── EQ.c 全局变量定义（声明在 EQ.h） ──── */
+const EQ_Vtable eq_vtable =
+{
+    .process = filter_process,
+    .clear  = filter_clear,
+    .setset_filter = set_filter
+};
+
+EQ eq_filter =
+{
+    .vptr   = &eq_vtable,
+    .config =
+    {
+        .b0    = 0x7FFFFFFF,
+        .b1    = 0,
+        .b2    = 0,
+        .a1    = 0,
+        .a2    = 0,
+        .shift = 0,
+        .x1    = 0,
+        .x2    = 0,
+        .y1    = 0,
+        .y2    = 0,
+        .fs    = 44100,
+        .f0    = 1000,
+        .Q     = 1,
+        .gain_db = 0
+    },
+    .filter = NULL
+};
+
+EQ* filter = &eq_filter;
+
+volume_control volume_init =
+{
+    .flag_change = false,
+    .current_volume_q15 = 0x7FFF,
+    .target_volume_q15  = 0x7FFF,
+    .set_audio_volume = set_audio_volume,
+    .process_audio_volume = process_audio_volume
+};
+
+volume_control* volume = &volume_init;

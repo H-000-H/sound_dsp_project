@@ -1,5 +1,6 @@
 #include "settings_app.hpp"
-#include "pwm_controller.hpp"
+#include "device.h"
+#include "hal_pwm.h"
 #include "thingscloud_app.hpp"
 #include "mqtt_client.hpp"
 
@@ -34,14 +35,23 @@ void SettingsImpl::on_mqtt_toggle(bool on)
 
 void SettingsImpl::on_brightness(int val)
 {
-    static bool pwm_inited = false;
-    if (!pwm_inited)
+    static hal_pwm_channel_t s_pwm;
+    static bool s_pwm_inited = false;
+
+    if (!s_pwm_inited)
     {
-        PwmOutputChannel::get_instance().init();
-        pwm_inited = true;
+        hal_pwm_init_struct(&s_pwm);
+
+        int pin = 15; /* fallback */
+        device_t* dev = device_find("lcd0");
+        if (dev) device_get_prop_int(dev, "backlight", &pin);
+
+        s_pwm.init(&s_pwm, pin, 5000, 10);
+        s_pwm_inited = true;
     }
-    uint32_t duty = (val * 255) / 100;
-    PwmOutputChannel::get_instance().set_duty(duty);
+
+    uint32_t duty = (val * 1023) / 100; /* 10-bit resolution */
+    s_pwm.set_duty(&s_pwm, duty);
 }
 
 void SettingsImpl::on_low_power(bool on)

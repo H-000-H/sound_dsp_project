@@ -2,17 +2,17 @@
 #include "theme.hpp"
 #include "ui/app/serial/serial.hpp"
 #include "ui/nav/inc/card_menu.hpp"
-#include "button.hpp"
+#include "key_input.hpp"
 
 extern "C" {
     LV_FONT_DECLARE(lv_font_custom_16);
     LV_FONT_DECLARE(lv_font_montserrat_14);
 }
 
-#define GPIO_NEXT  CONFIG_LVGL_KEY_NEXT_GPIO
-#define GPIO_PREV  CONFIG_LVGL_KEY_PREV_GPIO
-#define GPIO_ENTER CONFIG_LVGL_KEY_ENTER_GPIO
-#define GPIO_ESC   CONFIG_LVGL_KEY_ESC_GPIO
+#define GPIO_NEXT  KeyInput::getGpioNext()
+#define GPIO_PREV  KeyInput::getGpioPrev()
+#define GPIO_ENTER KeyInput::getGpioEnter()
+#define GPIO_ESC   KeyInput::getGpioEsc()
 
 /* 波特率表 */
 const int BAUD_RATES[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
@@ -349,7 +349,7 @@ void SerialApp::nav_timer_cb(lv_timer_t* t)
     if (!app || lv_screen_active() != app->screen()) return;
 
     static int s_last_gpio = -1;
-    int gpio = Button::get_instance().get_pressed_gpio();
+    int gpio = KeyInput::getInstance().get_pressed_gpio();
     bool is_nav = (gpio == GPIO_NEXT || gpio == GPIO_PREV);
     if (is_nav && gpio != s_last_gpio)
     {

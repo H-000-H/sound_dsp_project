@@ -5,20 +5,13 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-typedef void (*eq_filter_callback)(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, int32_t gain_db);
+#include <stddef.h>
+#include <stdbool.h>
+/* Q15 常量: 0.001f → (int32_t)(0.001 * 32768) ≈ 33 */
+#define VOLUME_SMOOTH_ALPHA_Q15 33
 
 /* High Shelf Filter — Q31 定点实现 */
-typedef enum
-{
-    Peak_filter=0,
-    High_shelf_filter,
-    Low_shelf_filter,
-    High_pass_fiter,
-    Low_pass_filter,
-    Band_pass_filter
-}filter_classfiy;
-
-typedef struct 
+typedef struct
 {
     /* Q31 系数: 实际系数 = q31_val / 2^(31-shift) */
     int32_t b0, b1, b2;
@@ -35,6 +28,25 @@ typedef struct
     uint32_t Q;
     int32_t  gain_db;
 } filter_config_t;
+
+/* 回调类型 (放在 filter_config_t 之后) */
+typedef void (*eq_filter_callback)(filter_config_t *f, uint32_t fs, uint32_t f0, uint32_t Q, int32_t gain_db);
+
+/* 滤波器类型枚举 */
+typedef enum 
+{
+    EQ_NONE=0,
+    EQ_PEAK,
+    EQ_HIGH_SHELF,
+    EQ_LOW_SHELF,
+    EQ_HIGH_PASS,
+    EQ_LOW_PASS,
+    EQ_BAND_PASS
+}filter_classfiy;
+
+/*一阶低通滤波 IIR控制音量*/
+void set_audio_volume (float v);
+
 void Low_shelf_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, int32_t gain_db);
 
 void Peaking_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, int32_t gain_db);
@@ -54,9 +66,37 @@ void filter_clear(filter_config_t *f);
 /* 原有回调结构 */
 typedef struct 
 {
-    void (*EQ_driver)(eq_filter_callback filter_cb,filter_classfiy classfiy);
+    void (*process)(filter_config_t *f,const int32_t *in, int32_t *out, uint32_t len);
+    void (*clear)(filter_config_t *f);
+    void (*setset_filter)(filter_classfiy type, uint32_t f0, uint32_t Q, int32_t gain_db);
+} EQ_Vtable;
+
+typedef struct
+{
+    const EQ_Vtable * vptr;
+    filter_config_t config;
+    eq_filter_callback filter;
 } EQ;
 
+void set_filter(filter_classfiy type, uint32_t f0, uint32_t Q, int32_t gain_db);
+
+extern const EQ_Vtable eq_vtable;
+extern EQ eq_filter;
+extern EQ* filter;
+
+void process_audio_volume(int16_t* buffer, uint32_t sample_count);
+
+typedef struct
+{
+    volatile bool flag_change;
+    int32_t current_volume_q15;   /* Q15: 0 ~ 0x7FFF */
+    int32_t target_volume_q15;    /* Q15: 0 = 静音, 0x7FFF = 1.0 */
+    void (*set_audio_volume)(float volume);
+    void (*process_audio_volume)(int16_t* buffer,uint32_t sample_count);
+}volume_control;
+
+extern volume_control volume_init;
+extern volume_control* volume;
 #ifdef __cplusplus
 }
 #endif

@@ -1,9 +1,5 @@
 /* Layer 2 - 卡片轮播菜单
  * 一次展示 2 个卡片，PREV/NEXT 切换，ENTER 进入，ESC 返回锁屏
- *
- * 按键路由：
- *   PREV/NEXT — GPIO 轮询（nav_timer_cb）
- *   ENTER/ESC — LV_EVENT_KEY → key_cb()
  */
 #include "card_menu.hpp"
 #include "theme.hpp"
@@ -12,8 +8,11 @@
 #include "app/inc/settings_app.hpp"
 #include "app/inc/music_app.hpp"
 #include "app/inc/serial_app.hpp"
-#include "button.hpp"
-#include "factory.hpp"
+
+#include "device.h"
+#include "key_input.hpp"
+
+#include <ctime>
 
 extern "C"
 {
@@ -25,25 +24,33 @@ extern "C"
     extern const lv_image_dsc_t icon_serial_debug;
 }
 
-#define GPIO_NEXT  CONFIG_LVGL_KEY_NEXT_GPIO
-#define GPIO_PREV  CONFIG_LVGL_KEY_PREV_GPIO
+/* ── 按键 GPIO 映射（从 DeviceTree 读取）── */
+static int s_gpio_next  = -1;
+static int s_gpio_prev  = -1;
+static int s_gpio_enter = -1;
+static int s_gpio_esc   = -1;
+
+#define GPIO_NEXT  s_gpio_next
+#define GPIO_PREV  s_gpio_prev
+#define GPIO_ENTER s_gpio_enter
+#define GPIO_ESC   s_gpio_esc
 
 /*====================================================================*/
-/*  应用条目 — 直接使用 AppBase 指针                                  */
+/*  应用条目                                                          */
 /*====================================================================*/
-struct AppEntry 
+struct AppEntry
 {
     const char*   name;
     const lv_image_dsc_t* img;
     AppBase*      app;
 };
 
-/* 前置声明：Impl 类实例（在对应 impl.cpp 中定义）*/
+/* 前置声明：Impl 类实例 */
 extern SettingsImpl g_settings_impl;
 extern MusicImpl    g_music_impl;
 extern SerialImpl   g_serial_impl;
 
-static const AppEntry s_apps[] = 
+static const AppEntry s_apps[] =
 {
     {"设置",     &icon_settings,      &g_settings_impl},
     {"音乐",     &icon_music,         &g_music_impl},
@@ -77,6 +84,19 @@ static lv_timer_t* s_nav_timer   = nullptr;
 static void animate_to(int new_page);
 
 /*====================================================================*/
+/*  按键映射初始化                                                    */
+/*====================================================================*/
+static void key_map_init(void)
+{
+    device_t* btn = device_find("buttons0");
+    if (!btn) return;
+    device_get_prop_int(btn, "next_pin",  &s_gpio_next);
+    device_get_prop_int(btn, "prev_pin",  &s_gpio_prev);
+    device_get_prop_int(btn, "enter_pin", &s_gpio_enter);
+    device_get_prop_int(btn, "esc_pin",   &s_gpio_esc);
+}
+
+/*====================================================================*/
 /*  高亮 + 圆点                                                        */
 /*====================================================================*/
 static void update_highlight()
@@ -88,10 +108,10 @@ static void update_highlight()
         {
             lv_obj_set_style_border_color(s_cards[i], lv_color_hex(th_accent()), 0);
             lv_obj_set_style_border_width(s_cards[i], 3, 0);
-            lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);//获取卡片的图标对应的对象
+            lv_obj_t* img = lv_obj_get_child(s_cards[i], 0);
             if (img) lv_obj_set_style_img_recolor_opa(img, LV_OPA_TRANSP, 0);
-        } 
-        else 
+        }
+        else
         {
             lv_obj_set_style_border_color(s_cards[i], lv_color_hex(th_border()), 0);
             lv_obj_set_style_border_width(s_cards[i], 1, 0);
@@ -110,8 +130,8 @@ static void update_dots()
         {
             lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text()), 0);
             lv_obj_set_size(s_dots[i], 8, 8);
-        } 
-        else 
+        }
+        else
         {
             lv_obj_set_style_bg_color(s_dots[i], lv_color_hex(th_text_sec()), 0);
             lv_obj_set_size(s_dots[i], 6, 6);
@@ -125,30 +145,29 @@ static void update_dots()
 static void animate_to(int new_page)
 {
     if (new_page < 0 || new_page >= APP_COUNT) return;
-    if (new_page == s_page || s_animating) return;//相同或者正在动画
-    if (!s_card_row || !lv_obj_is_valid(s_card_row)) return;// 对象有效性检查
+    if (new_page == s_page || s_animating) return;
+    if (!s_card_row || !lv_obj_is_valid(s_card_row)) return;
     s_animating = true;
 
     int cur_x = lv_obj_get_x(s_card_row);
-    /*判断是否是第一页和最后一页的切换*/
     bool wrap = (new_page == 0 && s_page == APP_COUNT - 1) || (new_page == APP_COUNT - 1 && s_page == 0);
     if (wrap)
-    {/*隐藏中间卡片*/
+    {
         for (int i = 1; i < APP_COUNT - 1; i++)
             lv_obj_add_flag(s_cards[i], LV_OBJ_FLAG_HIDDEN);
     }
     int tar_x;
-    if (new_page == 0)//第一页左对齐
+    if (new_page == 0)
         tar_x = 0;
     else if (new_page == APP_COUNT - 1)
-        tar_x = CONT_W - (new_page * STEP + CARD_W);//右对齐
+        tar_x = CONT_W - (new_page * STEP + CARD_W);
     else
-        tar_x = CONT_W / 2 - (new_page * STEP + CARD_W / 2);//中间页居中
+        tar_x = CONT_W / 2 - (new_page * STEP + CARD_W / 2);
 
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_card_row);
-    lv_anim_set_exec_cb(&a, [](void* v, int32_t vv) { lv_obj_set_x((lv_obj_t*)v, vv); });//每帧回调函数
+    lv_anim_set_exec_cb(&a, [](void* v, int32_t vv) { lv_obj_set_x((lv_obj_t*)v, vv); });
     lv_anim_set_values(&a, cur_x, tar_x);
     lv_anim_set_duration(&a, 220);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
@@ -179,7 +198,7 @@ static void nav_timer_cb(lv_timer_t* t)
         s_prev_held = false; return;
     }
 
-    int gpio = Button::get_instance().get_pressed_gpio();
+    int gpio = KeyInput::getInstance().get_pressed_gpio();
     bool now_held = (gpio == GPIO_NEXT || gpio == GPIO_PREV);
 
     if (now_held && !s_prev_held)
@@ -210,7 +229,6 @@ static void key_cb(lv_event_t* e)
     }
     else if (key == LV_KEY_ENTER)
     {
-        /* 使用 AppBase 的 show() 进入应用 */
         lv_async_call([](void* arg)
         {
             auto* app = static_cast<AppBase*>(arg);
@@ -233,9 +251,9 @@ static void time_update_cb(lv_timer_t* t)
     {
         lv_timer_delete(t); return;
     }
-    auto* ti = factory_config::time::get_time();
-    auto info = ti->get_time();
-    lv_label_set_text_fmt(lb, "%02d:%02d", info.hour, info.minute);
+    time_t now = time(nullptr);
+    struct tm* tm_info = localtime(&now);
+    lv_label_set_text_fmt(lb, "%02d:%02d", tm_info->tm_hour, tm_info->tm_min);
 }
 
 /*====================================================================*/
@@ -246,10 +264,10 @@ static void create_cards()
     lv_obj_t* cont = lv_obj_create(s_screen);
     lv_obj_set_size(cont, CONT_W, CARD_H);
     lv_obj_set_pos(cont, CONT_X, CONT_Y);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);//透明背景
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 0, 0);
-    lv_obj_set_style_clip_corner(cont, true, 0);//启动裁剪超出大小直接裁剪
+    lv_obj_set_style_clip_corner(cont, true, 0);
     lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
 
     s_card_row = lv_obj_create(cont);
@@ -258,7 +276,7 @@ static void create_cards()
     lv_obj_set_style_bg_opa(s_card_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_card_row, 0, 0);
     lv_obj_set_style_pad_all(s_card_row, 0, 0);
-    lv_obj_set_style_layout(s_card_row, LV_LAYOUT_NONE, 0);//手动控制卡片位置
+    lv_obj_set_style_layout(s_card_row, LV_LAYOUT_NONE, 0);
     lv_obj_remove_flag(s_card_row, LV_OBJ_FLAG_SCROLLABLE);
 
     for (int i = 0; i < APP_COUNT; i++)
@@ -327,9 +345,9 @@ static void create_time_label()
     lv_obj_set_style_text_font(s_time_label, &lv_font_montserrat_20, 0);
     lv_obj_align(s_time_label, LV_ALIGN_TOP_LEFT, 10, 8);
 
-    auto* ti = factory_config::time::get_time();
-    auto info = ti->get_time();
-    lv_label_set_text_fmt(s_time_label, "%02d:%02d", info.hour, info.minute);
+    time_t now = time(nullptr);
+    struct tm* tm_info = localtime(&now);
+    lv_label_set_text_fmt(s_time_label, "%02d:%02d", tm_info->tm_hour, tm_info->tm_min);
     lv_timer_create(time_update_cb, 1000, s_time_label);
 }
 
@@ -347,11 +365,11 @@ void card_menu_show(void)
         {
             int restore_x;
             if (s_page == 0)
-                restore_x = 0;//第一页左对齐
+                restore_x = 0;
             else if (s_page == APP_COUNT - 1)
-                restore_x = CONT_W - (s_page * STEP + CARD_W);//最后一页右对齐
+                restore_x = CONT_W - (s_page * STEP + CARD_W);
             else
-                restore_x = CONT_W / 2 - (s_page * STEP + CARD_W / 2);//居中
+                restore_x = CONT_W / 2 - (s_page * STEP + CARD_W / 2);
             lv_obj_set_x(s_card_row, restore_x);
         }
         update_highlight();
@@ -365,6 +383,9 @@ void card_menu_show(void)
             s_nav_timer = lv_timer_create(nav_timer_cb, 50, nullptr);
         return;
     }
+
+    /* ── 首次初始化按键映射 ── */
+    key_map_init();
 
     s_page = 0;
     s_animating = false;

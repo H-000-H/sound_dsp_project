@@ -1,10 +1,10 @@
 #include "music_app.hpp"
 #include "ui/nav/inc/card_menu.hpp"
-#include "button.hpp"
+#include "key_input.hpp"
 #include "ui/app/music/song_list.hpp"
 #include "theme.hpp"
 
-extern "C" 
+extern "C"
 {
     LV_FONT_DECLARE(lv_font_montserrat_14);
     LV_FONT_DECLARE(lv_font_montserrat_20);
@@ -16,11 +16,11 @@ extern "C"
 /*====================================================================*/
 static const char* s_mode_names[] = {"原声", "标准", "加强", "自定义"};
 
-/* 按键定义 — 与 lvgl_main.cpp 中的 KEY_GPIO 一致 */
-#define GPIO_NEXT  CONFIG_LVGL_KEY_NEXT_GPIO
-#define GPIO_PREV  CONFIG_LVGL_KEY_PREV_GPIO
-#define GPIO_ENTER CONFIG_LVGL_KEY_ENTER_GPIO
-#define GPIO_ESC   CONFIG_LVGL_KEY_ESC_GPIO
+/* 按键 GPIO 从 DeviceTree 读取 */
+#define GPIO_NEXT  KeyInput::getGpioNext()
+#define GPIO_PREV  KeyInput::getGpioPrev()
+#define GPIO_ENTER KeyInput::getGpioEnter()
+#define GPIO_ESC   KeyInput::getGpioEsc()
 
 /*====================================================================*/
 /*  UI 构建                                                           */
@@ -532,7 +532,7 @@ void music_nav_timer_cb(lv_timer_t* t)
     
     /* 仅处理 NEXT/PREV 上升沿（ENTER/ESC 由 LV_EVENT_KEY 处理）*/
     static int s_last_gpio = -1;
-    int gpio = Button::get_instance().get_pressed_gpio();
+    int gpio = KeyInput::getInstance().get_pressed_gpio();
     bool is_nav = (gpio == GPIO_NEXT || gpio == GPIO_PREV);
     
     if (is_nav && gpio != s_last_gpio)

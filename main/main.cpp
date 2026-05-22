@@ -1,8 +1,11 @@
-#include "app_freertos.hpp"
 #include "main.hpp"
+#include "system_runtime.hpp"
+#include "ui_service.hpp"
+
+void lvgl_main(void);
 
 EXTERN_C void app_main(void)
 {
-    lv_init();
-    app_freertos_init();
+    UiService::set_entry(lvgl_main);
+    SystemRuntime::getInstance().start();
 }

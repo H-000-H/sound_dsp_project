@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "src/task_config.c"
+        "src/board_dts.c"
+        "src/board_driver.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        json
+        freertos
+    EMBED_TXTFILES
+        "board.dts.json"
+)
