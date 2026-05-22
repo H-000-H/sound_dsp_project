@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数字音频滤波器特性分析仪</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col font-sans select-none">
+
+    <!-- Header -->
+    <header class="bg-gray-900 border-b border-gray-800 py-3 px-6 shadow-lg">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+            <div>
+                <h1 class="text-lg font-bold text-blue-400 flex items-center gap-2">
+                    <span>📊</span> 经典 Biquad 滤波器幅频特性精密分析仪
+                </h1>
+                <p class="text-xs text-gray-400 mt-0.5">
+                    纯前端原生 Canvas 渲染 · 延迟安全加载架构，完美防 VS Code Webview 假死黑屏
+                </p>
+            </div>
+            <div class="text-[11px] font-mono bg-gray-950 px-3 py-1 rounded border border-gray-800 text-gray-500">
+                采样率: 44100 Hz | 传递函数: H(z)
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- 左侧：参数调整中心 -->
+        <div class="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-xl flex flex-col justify-between gap-6 lg:col-span-1 h-fit">
+            
+            <div>
+                <h2 class="text-sm font-bold uppercase tracking-wider text-gray-400 mb-4 pb-2 border-b border-gray-800 flex items-center gap-1.5">
+                    <span>🎛️</span> 滤波器选择与控制
+                </h2>
+
+                <!-- 6 种类型单选组合 -->
+                <div class="mb-5">
+                    <label class="block text-xs font-medium text-gray-400 mb-2">选择滤波器类型</label>
+                    <div class="grid grid-cols-2 gap-2" id="filter-types-grid">
+                        <!-- 由 JS 动态渲染以防状态同步死板 -->
+                    </div>
+                </div>
+
+                <!-- 频率控制器（对数步进） -->
+                <div class="mb-5">
+                    <div class="flex justify-between text-xs font-semibold mb-1.5">
+                        <span class="text-gray-300">中心/截止频率 (Fc)</span>
+                        <span id="val-freq" class="text-blue-400 font-mono text-sm">1000.0 Hz</span>
+                    </div>
+                    <input type="range" id="input-freq-log" min="0" max="1" step="0.001" value="0.5" class="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateParameters()">
+                    <div class="flex justify-between text-[10px] text-gray-500 mt-1 font-mono">
+                        <span>20 Hz</span>
+                        <span>100 Hz</span>
+                        <span>1k Hz</span>
+                        <span>20k Hz</span>
+                    </div>
+                </div>
+
+                <!-- 增益控制器 -->
+                <div id="gain-container" class="mb-5 transition-all duration-200">
+                    <div class="flex justify-between text-xs font-semibold mb-1.5">
+                        <span class="text-gray-300">滤波器增益 (Gain)</span>
+                        <span id="val-gain" class="text-blue-400 font-mono text-sm">+0.0 dB</span>
+                    </div>
+                    <input type="range" id="input-gain" min="-24" max="24" step="0.1" value="0" class="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateParameters()">
+                    <div class="flex justify-between text-[10px] text-gray-500 mt-1 font-mono">
+                        <span>-24.0 dB</span>
+                        <span>0.0 dB (无响应)</span>
+                        <span>+24.0 dB</span>
+                    </div>
+                </div>
+
+                <!-- Q 值控制器 -->
+                <div class="mb-2">
+                    <div class="flex justify-between text-xs font-semibold mb-1.5">
+                        <span class="text-gray-300">品质因数 / 带宽 (Q)</span>
+                        <span id="val-q" class="text-blue-400 font-mono text-sm">0.707</span>
+                    </div>
+                    <input type="range" id="input-q" min="0.05" max="20" step="0.01" value="0.707" class="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateParameters()">
+                    <div class="flex justify-between text-[10px] text-gray-500 mt-1 font-mono">
+                        <span>0.05 (极宽)</span>
+                        <span>0.707 (平坦)</span>
+                        <span>20.0 (尖锐啸叫)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 特性说明板 -->
+            <div class="p-3 bg-gray-950 rounded-lg border border-gray-800 text-[11px] text-gray-400 leading-relaxed" id="filter-description-box">
+                <!-- 动态注入当前滤波器的物理常识 -->
+            </div>
+        </div>
+
+        <!-- 右侧：满屏频响图表及离散数值 -->
+        <div class="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-xl lg:col-span-2 flex flex-col justify-between gap-4">
+            
+            <div class="flex items-center justify-between pb-2 border-b border-gray-800">
+                <div class="flex items-center gap-2">
+                    <span id="color-dot" class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                    <h2 class="text-sm font-bold text-gray-200" id="filter-title-display">Peak EQ 幅频特性曲线</h2>
+                </div>
+                <span class="text-[11px] text-gray-500 font-mono">垂直范围: +24 dB ~ -40 dB</span>
+            </div>
+
+            <!-- 核心交互渲染画布容器 -->
+            <div class="relative flex-1 min-h-[380px] bg-gray-950 rounded-xl border border-black/40 overflow-hidden flex items-center justify-center">
+                <canvas id="filterCanvas" class="w-full h-full block"></canvas>
+            </div>
+
+            <!-- 底部的离散 Biquad H(z) 系数只读监视器 -->
+            <div class="grid grid-cols-5 gap-2 font-mono text-center">
+                <div class="p-1.5 bg-gray-950 border border-gray-800 rounded">
+                    <div class="text-[9px] text-gray-500 font-sans">b0 (Feedforward)</div>
+                    <div id="m-b0" class="text-xs text-green-400 font-semibold mt-0.5">-</div>
+                </div>
+                <div class="p-1.5 bg-gray-950 border border-gray-800 rounded">
+                    <div class="text-[9px] text-gray-500 font-sans">b1 (Feedforward)</div>
+                    <div id="m-b1" class="text-xs text-green-400 font-semibold mt-0.5">-</div>
+                </div>
+                <div class="p-1.5 bg-gray-950 border border-gray-800 rounded">
+                    <div class="text-[9px] text-gray-500 font-sans">b2 (Feedforward)</div>
+                    <div id="m-b2" class="text-xs text-green-400 font-semibold mt-0.5">-</div>
+                </div>
+                <div class="p-1.5 bg-gray-950 border border-gray-800 rounded">
+                    <div class="text-[9px] text-gray-500 font-sans">a1 (Feedback)</div>
+                    <div id="m-a1" class="text-xs text-red-400 font-semibold mt-0.5">-</div>
+                </div>
+                <div class="p-1.5 bg-gray-950 border border-gray-800 rounded">
+                    <div class="text-[9px] text-gray-500 font-sans">a2 (Feedback)</div>
+                    <div id="m-a2" class="text-xs text-red-400 font-semibold mt-0.5">-</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // 全局状态变量声明，不在全局立即查找 DOM
+        const fs = 44100;
+        let currentType = 'peak';
+        let coeffs = { b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 };
+        let canvas = null;
+        let ctx = null;
+
+        // 极限常数定义（对数频轴：20Hz 到 20000Hz）
+        const fMin = 20;
+        const fMax = 20000;
+        const logMin = Math.log10(fMin);
+        const logMax = Math.log10(fMax);
+
+        // 滤波器元数据定义
+        const filterMeta = {
+            peak: { name: 'Peak EQ (尖峰滤波器)', color: '#3b82f6', hasGain: true, desc: '<b>尖峰滤波器</b>：在中心频率 Fc 附近对信号进行精细的增益提升或衰减。当 Q 值变大时，影响的带宽变窄。常用于精细微调特定共鸣点或修复缺陷。' },
+            lowpass: { name: 'Low Pass (低通滤波器)', color: '#ef4444', hasGain: false, desc: '<b>二阶低通滤波器</b>：允许低于截止频率 Fc 的信号通过，高出 Fc 的信号以 -12dB/Octave 的斜率无限衰减。Q 值的增大会在截止频率处产生一个尖锐的能量翘起（共鸣点）。' },
+            highpass: { name: 'High Pass (高通滤波器)', color: '#10b981', hasGain: false, desc: '<b>二阶高通滤波器</b>：斩断低于截止频率 Fc 的低频杂音（如舞台低频轰鸣、直流偏置），高频无损通过。衰减滚降斜率同样为标准二阶的 -12dB/Octave。' },
+            lowshelf: { name: 'Low Shelf (低架滤波器)', color: '#f59e0b', hasGain: true, desc: '<b>低架滤波器</b>：类似于传统低音（Bass）旋钮。将低于截止频率 Fc 的整个低频段整体均匀调高或调低指定的 dB 数，随后平滑过渡恢复到 0dB。' },
+            highshelf: { name: 'High Shelf (高架滤波器)', color: '#8b5cf6', hasGain: true, desc: '<b>高架滤波器</b>：类似于传统高音（Treble）高频染色旋钮。整体升高或降低截止频率 Fc 以上的所有高频能量，常用于给音频整体提亮或去噪。' },
+            bandpass: { name: 'Band Pass (带通滤波器)', color: '#ec4899', hasGain: false, desc: '<b>带通滤波器</b>：完全掐断极低频和极高频，仅允许中心频率 Fc 附近的一小段窄带信号通过。Q 值越大通过的频带越窄。Fc 处固定保持 0dB。' }
+        };
+
+        // 安全地初始化 Canvas DOM 对象，完全避开加载顺序崩溃问题
+        function initCanvas() {
+            canvas = document.getElementById('filterCanvas');
+            if (!canvas) return false;
+            ctx = canvas.getContext('2d');
+            return !!ctx;
+        }
+
+        // 初始化渲染 6 种类型单选按钮
+        function initTypeButtons() {
+            const container = document.getElementById('filter-types-grid');
+            if (!container) return;
+            container.innerHTML = Object.keys(filterMeta).map(key => {
+                return `<button id="btn-${key}" onclick="changeFilterType('${key}')" class="py-2 px-2 text-center text-xs font-bold rounded-lg border transition-all truncate"></button>`;
+            }).join('');
+        }
+
+        function changeFilterType(type) {
+            currentType = type;
+            
+            // 刷新按键高亮样式
+            Object.keys(filterMeta).forEach(key => {
+                const btn = document.getElementById(`btn-${key}`);
+                if (!btn) return;
+                if (key === type) {
+                    btn.className = "py-2 px-3 text-center text-xs font-bold rounded-lg border text-white transition-all shadow-md";
+                    btn.style.backgroundColor = filterMeta[key].color;
+                    btn.style.borderColor = filterMeta[key].color;
+                    btn.innerText = key.toUpperCase();
+                } else {
+                    btn.className = "py-2 px-3 text-center text-xs font-medium rounded-lg border bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-all";
+                    btn.style.backgroundColor = '';
+                    btn.style.borderColor = '';
+                    btn.innerText = key.toUpperCase();
+                }
+            });
+
+            // 联动增益调节显隐
+            const gContainer = document.getElementById('gain-container');
+            if (gContainer) {
+                if (filterMeta[type].hasGain) {
+                    gContainer.style.opacity = '1';
+                    gContainer.style.pointerEvents = 'auto';
+                } else {
+                    gContainer.style.opacity = '0.25';
+                    gContainer.style.pointerEvents = 'none';
+                }
+            }
+
+            // 更新文本与色块
+            const titleDisplay = document.getElementById('filter-title-display');
+            if (titleDisplay) titleDisplay.innerText = filterMeta[type].name;
+            
+            const colorDot = document.getElementById('color-dot');
+            if (colorDot) colorDot.style.backgroundColor = filterMeta[type].color;
+            
+            const descBox = document.getElementById('filter-description-box');
+            if (descBox) descBox.innerHTML = filterMeta[type].desc;
+
+            updateParameters();
+        }
+
+        // RBJ Cookbook 二阶滤波器核心计算代码
+        function calculateBiquadCoeffs(freq, gainDb, Q, type) {
+            const w0 = 2 * Math.PI * freq / fs;
+            const cosW0 = Math.cos(w0);
+            const sinW0 = Math.sin(w0);
+            
+            let b0, b1, b2, a0, a1, a2;
+
+            switch (type) {
+                case 'peak': {
+                    const A = Math.pow(10, gainDb / 40);
+                    const alpha = sinW0 / (2 * Q);
+                    b0 = 1 + alpha * A; b1 = -2 * cosW0; b2 = 1 - alpha * A;
+                    a0 = 1 + alpha / A; a1 = -2 * cosW0; a2 = 1 - alpha / A;
+                    break;
+                }
+                case 'lowpass': {
+                    const alpha = sinW0 / (2 * Q);
+                    b0 = (1 - cosW0) / 2; b1 = 1 - cosW0; b2 = (1 - cosW0) / 2;
+                    a0 = 1 + alpha; a1 = -2 * cosW0; a2 = 1 - alpha;
+                    break;
+                }
+                case 'highpass': {
+                    const alpha = sinW0 / (2 * Q);
+                    b0 = (1 + cosW0) / 2; b1 = -(1 + cosW0); b2 = (1 + cosW0) / 2;
+                    a0 = 1 + alpha; a1 = -2 * cosW0; a2 = 1 - alpha;
+                    break;
+                }
+                case 'lowshelf': {
+                    const A = Math.pow(10, gainDb / 40);
+                    const alpha = (sinW0 / 2) * Math.sqrt((A + 1/A)*(1/Q - 1) + 2);
+                    const doubleSqrtAAlpha = 2 * Math.sqrt(A) * alpha;
+                    b0 = A * ((A + 1) - (A - 1) * cosW0 + doubleSqrtAAlpha);
+                    b1 = 2 * A * ((A - 1) - (A + 1) * cosW0);
+                    b2 = A * ((A + 1) - (A - 1) * cosW0 - doubleSqrtAAlpha);
+                    a0 = (A + 1) + (A - 1) * cosW0 + doubleSqrtAAlpha;
+                    a1 = -2 * ((A - 1) + (A + 1) * cosW0);
+                    a2 = (A + 1) + (A - 1) * cosW0 - doubleSqrtAAlpha;
+                    break;
+                }
+                case 'highshelf': {
+                    const A = Math.pow(10, gainDb / 40);
+                    const alpha = (sinW0 / 2) * Math.sqrt((A + 1/A)*(1/Q - 1) + 2);
+                    const doubleSqrtAAlpha = 2 * Math.sqrt(A) * alpha;
+                    b0 = A * ((A + 1) + (A - 1) * cosW0 + doubleSqrtAAlpha);
+                    b1 = -2 * A * ((A - 1) + (A + 1) * cosW0);
+                    b2 = A * ((A + 1) + (A - 1) * cosW0 - doubleSqrtAAlpha);
+                    a0 = (A + 1) - (A - 1) * cosW0 + doubleSqrtAAlpha;
+                    a1 = 2 * ((A - 1) - (A + 1) * cosW0);
+                    a2 = (A + 1) - (A - 1) * cosW0 - doubleSqrtAAlpha;
+                    break;
+                }
+                case 'bandpass': {
+                    const alpha = sinW0 / (2 * Q);
+                    b0 = alpha; b1 = 0; b2 = -alpha;
+                    a0 = 1 + alpha; a1 = -2 * cosW0; a2 = 1 - alpha;
+                    break;
+                }
+            }
+            
+            // 安全防崩保护：当分母为零时，返回一组安全默认系数
+            if (Math.abs(a0) < 1e-12) {
+                return { b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 };
+            }
+            return { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0 };
+        }
+
+        // 核心 Canvas 高保真绘制函数（增加安全保护，解决闪黑死锁问题）
+        function drawResponseCurve() {
+            if (!canvas || !ctx) return; // 安全防御
+
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.width / dpr;
+            const height = canvas.height / dpr;
+
+            if (width <= 0 || height <= 0) return; // 尺寸非法时不绘制，防崩
+
+            // 彻底清理并铺底色
+            ctx.fillStyle = '#030712';
+            ctx.fillRect(0, 0, width, height);
+
+            // 安全边界大小
+            const paddingLeft = 50;
+            const paddingRight = 20;
+            const paddingTop = 25;
+            const paddingBottom = 35;
+
+            const graphWidth = width - paddingLeft - paddingRight;
+            const graphHeight = height - paddingTop - paddingBottom;
+
+            if (graphWidth <= 0 || graphHeight <= 0) return;
+
+            const dbMax = 24;
+            const dbMin = -40;
+
+            // 物理频率 f 转换为画布像素坐标 X 轴映射
+            function getXByFreq(f) {
+                const logF = Math.log10(f);
+                return paddingLeft + ((logF - logMin) / (logMax - logMin)) * graphWidth;
+            }
+
+            // 纵坐标变成分贝坐标 Y 轴
+            function getYByDb(db) {
+                return paddingTop + ((dbMax - db) / (dbMax - dbMin)) * graphHeight;
+            }
+
+            // A. 绘制背景细网格（对数虚网格）
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#111827';
+            ctx.beginPath();
+            for (let dec = 1; dec <= 4; dec++) {
+                const base = Math.pow(10, dec);
+                for (let i = 1; i <= 9; i++) {
+                    const f = base * i;
+                    if (f >= fMin && f <= fMax) {
+                        const x = getXByFreq(f);
+                        ctx.moveTo(x, paddingTop);
+                        ctx.lineTo(x, paddingTop + graphHeight);
+                    }
+                }
+            }
+            ctx.stroke();
+
+            // B. 绘制主要频率网格线及文本标签
+            const mainFreqTicks = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+
+            mainFreqTicks.forEach(f => {
+                const x = getXByFreq(f);
+                ctx.strokeStyle = (f === 1000) ? '#4b5563' : '#1f2937'; 
+                ctx.lineWidth = (f === 1000) ? 1.5 : 1;
+
+                ctx.beginPath();
+                ctx.moveTo(x, paddingTop);
+                ctx.lineTo(x, paddingTop + graphHeight);
+                ctx.stroke();
+
+                const text = f >= 1000 ? (f / 1000) + 'k' : f;
+                ctx.fillText(text, x, paddingTop + graphHeight + 8);
+            });
+
+            // C. 绘制纵向分贝（dB）网格刻度
+            const dbTicks = [20, 10, 0, -10, -20, -30, -40];
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            dbTicks.forEach(db => {
+                const y = getYByDb(db);
+                ctx.strokeStyle = (db === 0) ? '#3b82f6' : '#1f2937'; 
+                ctx.lineWidth = (db === 0) ? 1.5 : 1;
+
+                ctx.beginPath();
+                ctx.moveTo(paddingLeft, y);
+                ctx.lineTo(paddingLeft + graphWidth, y);
+                ctx.stroke();
+
+                ctx.fillStyle = (db === 0) ? '#3b82f6' : '#6b7280';
+                ctx.fillText((db >= 0 ? '+' : '') + db, paddingLeft - 8, y);
+            });
+
+            // D. 绘制连续谱滤波响应物理特性曲线
+            ctx.beginPath();
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = filterMeta[currentType]?.color || '#3b82f6';
+
+            let isFirst = true;
+
+            for (let pixelX = 0; pixelX < graphWidth; pixelX++) {
+                const fraction = pixelX / graphWidth;
+                const currentFreq = Math.pow(10, logMin + fraction * (logMax - logMin));
+
+                // 离散系统传递函数求模 H(e^-jw)
+                const w = 2 * Math.PI * currentFreq / fs;
+                
+                // 分子部分
+                const numReal = coeffs.b0 + coeffs.b1 * Math.cos(-w) + coeffs.b2 * Math.cos(-2 * w);
+                const numImag = coeffs.b1 * Math.sin(-w) + coeffs.b2 * Math.sin(-2 * w);
+                // 分母部分
+                const denReal = 1 + coeffs.a1 * Math.cos(-w) + coeffs.a2 * Math.cos(-2 * w);
+                const denImag = coeffs.a1 * Math.sin(-w) + coeffs.a2 * Math.sin(-2 * w);
+
+                const denMagSq = denReal * denReal + denImag * denImag;
+                // 防止除数为 0 保护
+                const magnitude = denMagSq > 0 ? Math.sqrt((numReal * numReal + numImag * numImag) / denMagSq) : 0;
+                
+                let db = 20 * Math.log10(magnitude + 1e-12);
+                if (isNaN(db) || db < -200) db = -200;
+
+                const screenX = paddingLeft + pixelX;
+                const screenY = getYByDb(db);
+
+                // 画布范围裁切
+                if (screenY >= paddingTop && screenY <= paddingTop + graphHeight) {
+                    if (isFirst) {
+                        ctx.moveTo(screenX, screenY);
+                        isFirst = false;
+                    } else {
+                        ctx.lineTo(screenX, screenY);
+                    }
+                }
+            }
+            ctx.stroke();
+
+            // E. 绘制十字对准线准星与亮圈
+            const targetFreq = getActiveFrequency();
+            const crossX = getXByFreq(targetFreq);
+            
+            const wTarget = 2 * Math.PI * targetFreq / fs;
+            const nR = coeffs.b0 + coeffs.b1 * Math.cos(-wTarget) + coeffs.b2 * Math.cos(-2 * wTarget);
+            const nI = coeffs.b1 * Math.sin(-wTarget) + coeffs.b2 * Math.sin(-2 * wTarget);
+            const dR = 1 + coeffs.a1 * Math.cos(-wTarget) + coeffs.a2 * Math.cos(-2 * wTarget);
+            const dI = coeffs.a1 * Math.sin(-wTarget) + coeffs.a2 * Math.sin(-2 * wTarget);
+            
+            const dRSq = dR*dR + dI*dI;
+            const targetMag = dRSq > 0 ? Math.sqrt((nR*nR + nI*nI) / dRSq) : 0;
+            let targetDb = 20 * Math.log10(targetMag + 1e-12);
+            if (isNaN(targetDb) || targetDb < -200) targetDb = -200;
+            
+            const crossY = getYByDb(targetDb);
+
+            if (crossY >= paddingTop && crossY <= paddingTop + graphHeight) {
+                ctx.strokeStyle = 'rgba(156, 163, 175, 0.25)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(crossX, paddingTop);
+                ctx.lineTo(crossX, paddingTop + graphHeight);
+                ctx.stroke();
+                ctx.setLineDash([]); // 还原
+
+                // 物理焦点圈标记
+                ctx.beginPath();
+                ctx.arc(crossX, crossY, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.strokeStyle = filterMeta[currentType]?.color || '#3b82f6';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            // F. 绘制外层卡槽线框
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(paddingLeft, paddingTop, graphWidth, graphHeight);
+        }
+
+        // 获取对数滑块对应的真实频率数值
+        function getActiveFrequency() {
+            const slider = document.getElementById('input-freq-log');
+            if (!slider) return 1000;
+            const logSliderVal = parseFloat(slider.value);
+            return Math.pow(10, logMin + logSliderVal * (logMax - logMin));
+        }
+
+        // 刷新控制组件的数值看板并计算系数（安全版，保护免受空元素报错干扰）
+        function updateParameters() {
+            const freqInput = document.getElementById('input-freq-log');
+            const gainInput = document.getElementById('input-gain');
+            const qInput = document.getElementById('input-q');
+
+            // 如果控件未生成则暂缓计算
+            if (!freqInput || !gainInput || !qInput) return;
+
+            const freq = getActiveFrequency();
+            const gainDb = parseFloat(gainInput.value);
+            const Q = parseFloat(qInput.value);
+
+            // 安全更新数值指示文字
+            const fText = document.getElementById('val-freq');
+            if (fText) fText.innerText = `${freq.toFixed(1)} Hz`;
+            
+            const gText = document.getElementById('val-gain');
+            if (gText) gText.innerText = `${gainDb >= 0 ? '+' : ''}${gainDb.toFixed(1)} dB`;
+            
+            const qText = document.getElementById('val-q');
+            if (qText) qText.innerText = Q.toFixed(3);
+
+            // 计算系统核心差分系数
+            coeffs = calculateBiquadCoeffs(freq, gainDb, Q, currentType);
+
+            // 安全地将系数推送到看板上
+            const mb0 = document.getElementById('m-b0'); if (mb0) mb0.innerText = coeffs.b0.toFixed(5);
+            const mb1 = document.getElementById('m-b1'); if (mb1) mb1.innerText = coeffs.b1.toFixed(5);
+            const mb2 = document.getElementById('m-b2'); if (mb2) mb2.innerText = coeffs.b2.toFixed(5);
+            const ma1 = document.getElementById('m-a1'); if (ma1) ma1.innerText = coeffs.a1.toFixed(5);
+            const ma2 = document.getElementById('m-a2'); if (ma2) ma2.innerText = coeffs.a2.toFixed(5);
+
+            // 重新重绘曲线
+            drawResponseCurve();
+        }
+
+        // 防 VS Code 初始化高宽为 0 像素假死自适应保护逻辑
+        function safeResize() {
+            if (!canvas) return;
+            const parent = canvas.parentNode;
+            if (!parent) return;
+
+            const rect = parent.getBoundingClientRect();
+            let w = rect.width || parent.clientWidth || 700;
+            let h = rect.height || parent.clientHeight || 400;
+            
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+
+            if (ctx) {
+                ctx.scale(dpr, dpr);
+                drawResponseCurve();
+            }
+        }
+
+        // 注册自适应事件
+        window.addEventListener('resize', safeResize);
+
+        // 终极安全的延迟启动架构
+        window.onload = function() {
+            // 1. 先进行 DOM 节点绑定与自我保护检测
+            const success = initCanvas();
+            if (!success) {
+                // 如果极其罕见地失败了，每隔 50ms 进行重试，防止由于渲染不同步导致的报错死锁
+                const retryTimer = setInterval(() => {
+                    if (initCanvas()) {
+                        clearInterval(retryTimer);
+                        runInitFlow();
+                    }
+                }, 50);
+            } else {
+                runInitFlow();
+            }
+        };
+
+        // 安全执行内部完整初始化流程
+        function runInitFlow() {
+            initTypeButtons();
+            changeFilterType('peak');
+            safeResize();
+            
+            // 为 VS Code 提供二次深度唤醒，完美避免因 Webview 后台渲染错失高宽导致的黑屏
+            setTimeout(() => {
+                safeResize();
+                updateParameters();
+            }, 100);
+        }
+    </script>
+</body>
+</html>

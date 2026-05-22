@@ -11,7 +11,6 @@ namespace mqtt_tasks
 
         /* 启动时默认 WiFi 开，自动连接并启动 MQTT */
         app.start();
-
         uint32_t cnt = 0;
         app.run([&cnt](float* t, uint32_t* h)
         {

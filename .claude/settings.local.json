@@ -14,7 +14,8 @@
       "Bash(cmd.exe /c \"C:\\\\Users\\\\18514\\\\AppData\\\\Local\\\\Temp\\\\build_esp2.bat\")",
       "Bash(cmd.exe /c \"C:\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py --help\")",
       "Bash(ls -la /c/Users/18514/.codex/)",
-      "Read(//c/Users/18514/.codex//**)"
+      "Read(//c/Users/18514/.codex//**)",
+      "Bash(python -c ' *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\18514\\.codex"
