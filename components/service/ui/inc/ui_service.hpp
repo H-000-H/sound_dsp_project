@@ -1,20 +1,20 @@
 #pragma once
 
-#include "lifecycle.hpp"
+#include <cstdint>
 
-class UiService : public Lifecycle
+class UiService
 {
 public:
     static UiService& getInstance();
 
     static void set_entry(void (*entry)(void));
 
-    bool init() override;
-    bool start() override;
-    void stop() override;
-    void suspend() override;
-    void resume() override;
-    ModuleState state() const override;
+    bool init();
+    bool start();
+    void stop();
+    void suspend();
+    void resume();
+    bool is_active() const { return m_inited; }
 
     void run();
 
@@ -23,5 +23,6 @@ private:
     UiService(const UiService&) = delete;
     UiService& operator=(const UiService&) = delete;
 
-    ModuleState m_state = ModuleState::Created;
+    bool m_inited = false;
+    bool m_started = false;
 };

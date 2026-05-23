@@ -1,7 +1,22 @@
 #include "key_input.hpp"
 
+#include "capability/input_engine.hpp"
 #include "device.h"
-#include "gpio_key_driver.h"
+
+/* ── Input capability (module-level, init on first use) ── */
+static input_engine_t s_input_eng;
+static bool s_input_inited = false;
+
+static input_engine_t* get_input()
+{
+    if (!s_input_inited)
+    {
+        input_engine_init_struct(&s_input_eng);
+        s_input_eng.init(&s_input_eng);
+        s_input_inited = true;
+    }
+    return &s_input_eng;
+}
 
 /* ── 按键 GPIO 缓存 ── */
 static int s_gpio_next  = -1;
@@ -45,13 +60,14 @@ void KeyInput::process(uint32_t timeout_ms)
         if (!m_dev) return;
     }
 
-    gpio_key_state_t state;
-    int ret = gpio_key_scan(static_cast<device_t*>(m_dev), &state, 1);
-    if (ret > 0 && state.event == KEY_EVENT_PRESS)
+    input_engine_t* eng = get_input();
+    input_state_t state;
+    int ret = eng->scan(eng, &state, 1);
+    if (ret > 0 && state.event == INPUT_EVENT_PRESS)
     {
         m_last_gpio = state.gpio_pin;
     }
-    else if (ret > 0 && state.event == KEY_EVENT_RELEASE)
+    else if (ret > 0 && state.event == INPUT_EVENT_RELEASE)
     {
         m_last_gpio = -1;
     }

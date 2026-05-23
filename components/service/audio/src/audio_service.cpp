@@ -1,8 +1,6 @@
 #include "audio_service.hpp"
 
 #include "event_bus.hpp"
-#include "max98357a_driver.h"
-#include "mp3.hpp"
 #include "system_log.hpp"
 
 static constexpr const char* kTag = "AudioService";
@@ -15,81 +13,61 @@ AudioService& AudioService::getInstance()
 
 bool AudioService::init()
 {
-    if (m_state != ModuleState::Created && m_state != ModuleState::Stopped)
-    {
-        return true;
-    }
+    if (m_inited) return true;
 
-    /* 从 DeviceTree 查找功放设备 (driver 已 probe, 硬件已就绪) */
-    m_amp_dev = device_find("speaker_amp0");
-    if (m_amp_dev == nullptr)
+    audio_engine_init_struct(&m_engine);
+    if (m_engine.init(&m_engine) != 0)
     {
-        m_state = ModuleState::Failed;
-        SYS_LOGE(kTag, "speaker_amp0 not found in device tree");
+        SYS_LOGE(kTag, "audio engine init failed");
         return false;
     }
 
-    if (max98357a_init(m_amp_dev) != 0)
-    {
-        m_state = ModuleState::Failed;
-        SYS_LOGE(kTag, "amp init failed");
-        return false;
-    }
-
-    MP3::getinstance().init();
-    m_state = ModuleState::Initialized;
+    m_inited = true;
     EventBus::getInstance().post(SystemEvent::AudioReady);
     return true;
 }
 
 bool AudioService::start()
 {
-    if (m_state == ModuleState::Created && !init())
-    {
-        return false;
-    }
+    if (m_started) return true;
+    if (!m_inited && !init()) return false;
 
-    max98357a_set_enable(m_amp_dev, 1);
-    m_state = ModuleState::Started;
+    m_engine.set_enable(&m_engine, 1);
+    m_started = true;
     return true;
 }
 
 void AudioService::stop()
 {
-    max98357a_set_enable(m_amp_dev, 0);
-    m_state = ModuleState::Stopped;
+    if (!m_inited) return;
+    m_engine.set_enable(&m_engine, 0);
+    m_started = false;
 }
 
 void AudioService::suspend()
 {
-    max98357a_set_enable(m_amp_dev, 0);
-    m_state = ModuleState::Suspended;
+    if (!m_started) return;
+    m_engine.set_enable(&m_engine, 0);
+    m_started = false;
 }
 
 void AudioService::resume()
 {
-    max98357a_set_enable(m_amp_dev, 1);
-    m_state = ModuleState::Started;
-}
-
-ModuleState AudioService::state() const
-{
-    return m_state;
+    if (m_started) return;
+    if (!m_inited) return;
+    m_engine.set_enable(&m_engine, 1);
+    m_started = true;
 }
 
 void AudioService::playMp3(uint8_t* data, uint32_t len)
 {
-    if (data == nullptr || len == 0)
-    {
-        return;
-    }
-
+    if (data == nullptr || len == 0) return;
     start();
     EventBus::getInstance().post(SystemEvent::MusicPlay);
-    MP3::getinstance().play(data, len);
+    m_engine.play(&m_engine, data, len);
 }
 
 void AudioService::setVolume(float volume)
 {
-    MP3::getinstance().MP3_volume(volume);
+    m_engine.set_volume(&m_engine, volume);
 }

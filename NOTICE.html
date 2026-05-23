@@ -71,6 +71,7 @@
   .tag-music { background: rgba(198,40,40,0.06); color: var(--pink); }
   .tag-arch { background: rgba(69,39,160,0.06); color: var(--cyan); }
   .tag-theme { background: rgba(0,122,255,0.06); color: var(--blue); }
+  .tag-dt { background: rgba(124,77,255,0.08); color: var(--purple); }
 
   /* ===== Pitfall Cards ===== */
   .pits-grid { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
@@ -117,6 +118,13 @@
   ul li { margin-bottom: 4px; color: var(--text-dim); font-size: 13px; }
   ul li strong { color: var(--text); }
 
+  /* 架构图 */
+  .arch-pre {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 11px; line-height: 1.5; overflow-x: auto; margin: 8px 0;
+    font-family: "SF Mono","Fira Code","Consolas",monospace;
+  }
+
   @media (max-width: 600px) {
     body { padding: 12px 10px; }
     .entry { padding: 12px 14px; }
@@ -128,20 +136,21 @@
 <div class="container">
 
 <h1>✦ Sound DSP — 踩坑全记录</h1>
-<p class="subtitle">ESP32-S3 · LVGL 9.5 · 240×240 · 14 个已解决坑</p>
+<p class="subtitle">ESP32-S3 · LVGL 9.5 · 240×240 · 16 个已解决坑 + 架构重建</p>
 
 <div class="quick-nav">
   <a href="#pits">💀 14 坑</a>
   <a href="#timeline">📅 时间线</a>
+  <a href="#arch">🏗 架构重建</a>
   <a href="#keypad">🔑 按键吞噬</a>
   <a href="#config">⚙ 配置</a>
   <a href="#todo">📋 待办</a>
 </div>
 
 <!-- ============================================================ -->
-<!-- 💀 13 坑速查 -->
+<!-- 💀 14 坑速查 -->
 <!-- ============================================================ -->
-<h2 class="section-title" id="pits">💀 13 个坑 · 速查</h2>
+<h2 class="section-title" id="pits">💀 14 个坑 · 速查</h2>
 
 <div class="pits-grid">
 
@@ -195,7 +204,7 @@
 </div>
 
 <div class="pit">
-  <strong>13. ST7789 7 引脚无 CS — 必须 SPI Mode 3</strong> — 该模组没有独立 CS 引脚（<code>spics_io_num = -1</code>），DC 代替命令/数据区分。SPI 必须设为 <strong>Mode 3</strong>（CPOL=1, CPHA=1），否则 ST7789 无法正确采样 SCLK 边沿导致花屏或不显示。<span class="sln">✅ <span class="file">spi_bus.cpp</span> <code>interface_cfg.mode = 3</code>，同时设 <code>flags = SPI_DEVICE_HALFDUPLEX</code>（半双工，7 线无 MISO）。</span>
+  <strong>13. ST7789 7 引脚无 CS — 必须 SPI Mode 3</strong> — 该模组没有独立 CS 引脚（<code>spics_io_num = -1</code>），DC 代替命令/数据区分。SPI 必须设为 <strong>Mode 3</strong>（CPOL=1, CPHA=1），否则 ST7789 无法正确采样 SCLK 边沿导致花屏或不显示。<span class="sln">✅ <span class="file">st7789_driver.c</span> <code>dev_cfg.mode = 0</code>（SPI Mode 0/3 均可），CS=-1 表示无片选。</span>
 </div>
 
 <div class="pit">
@@ -209,6 +218,43 @@
 <!-- ============================================================ -->
 <h2 class="section-title" id="timeline">📅 时间线</h2>
 <div class="timeline">
+
+<!-- v4.0 -->
+<div class="entry">
+  <div class="entry-date">2026-05-23 · v4.0</div>
+  <div class="entry-title">架构重建：Linux Driver Model + DeviceTree + 组件解耦</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-arch">架构</span>
+    <span class="tag tag-dt">DeviceTree</span>
+    <span class="tag tag-fix">重构</span>
+  </p>
+  <ul>
+    <li><strong>🏗 JSON DeviceTree</strong>：<code>board.dts.json</code> 统一硬件描述，改引脚无需改 C 代码</li>
+    <li><strong>🔌 Linux Driver Model</strong>：DRIVER_REGISTER 宏 + probe/remove 引擎，支持 compatible 匹配和 parent 依赖递归</li>
+    <li><strong>🧱 HAL 隔离层</strong>：<code>components/hal/</code> 函数指针表，驱动不直接调 ESP-IDF</li>
+    <li><strong>🧩 middleware 拆分</strong>：→ core/ + system/ + service/input/，消除循环依赖</li>
+    <li><strong>🛡 Lifecycle 状态机</strong>：can_transit() 守卫，防非法状态转换</li>
+    <li><strong>🧹 DSP 接口净化</strong>：EQ.h 全局变量移入 EQ.c</li>
+  </ul>
+</div>
+
+<!-- v3.0 -->
+<div class="entry">
+  <div class="entry-date">2026-05-15 · v3.0</div>
+  <div class="entry-title">浅色/深色主题 · 花屏修复 · 串口 FIFO 重构</div>
+  <p style="margin-bottom:6px">
+    <span class="tag tag-theme">主题</span>
+    <span class="tag tag-fix">花屏</span>
+    <span class="tag tag-arch">重构</span>
+  </p>
+  <ul>
+    <li><strong>🎨 浅色/深色主题系统</strong>：<code>theme.hpp/cpp</code> 10 个颜色 getter，6 个 UI 文件替换硬编码颜色</li>
+    <li><strong>⚙ 设置页「外观」行</strong>：toggle 切换深色/浅色，所有 app 跟随</li>
+    <li><strong>🛡 LVGL 帧缓冲内存修复</strong>：<code>lvgl_alloc_buf()</code> 优先内部 RAM，避免 PSRAM cache 失效花屏</li>
+    <li><strong>🔁 串口 FIFO 替换</strong>：自定义 ring buffer → <code>buffer.h</code> FIFO</li>
+    <li><strong>📐 括号风格统一</strong>：全项目换行大括号</li>
+  </ul>
+</div>
 
 <!-- v2.7 -->
 <div class="entry">
@@ -316,25 +362,69 @@
   </ul>
 </div>
 
-<!-- v3.0 -->
-<div class="entry">
-  <div class="entry-date">2026-05-15 · v3.0</div>
-  <div class="entry-title">浅色/深色主题 · 花屏修复 · 串口 FIFO 重构</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-theme">主题</span>
-    <span class="tag tag-fix">花屏</span>
-    <span class="tag tag-arch">重构</span>
-  </p>
-  <ul>
-    <li><strong>🎨 浅色/深色主题系统</strong>：<code>theme.hpp/cpp</code> 10 个颜色 getter，6 个 UI 文件替换硬编码颜色</li>
-    <li><strong>⚙ 设置页「外观」行</strong>：toggle 切换深色/浅色，所有 app 跟随</li>
-    <li><strong>🛡 LVGL 帧缓冲内存修复</strong>：<code>lvgl_alloc_buf()</code> 优先内部 RAM，避免 PSRAM cache 失效花屏</li>
-    <li><strong>🔁 串口 FIFO 替换</strong>：自定义 ring buffer → <code>buffer.h</code> FIFO</li>
-    <li><strong>📐 括号风格统一</strong>：全项目换行大括号</li>
-  </ul>
 </div>
 
-</div>
+<!-- ============================================================ -->
+<!-- 🏗 架构重建 -->
+<!-- ============================================================ -->
+<h2 class="section-title" id="arch">🏗 架构重建：Linux Driver Model + DeviceTree</h2>
+
+<h3>背景</h3>
+<p>原先硬件描述分散在 <code>config/config.hpp</code>（311 行引脚定义）、<code>board/</code> C 结构体和 <code>bsp/</code> 多处，更换硬件需改多处代码。引入 JSON mini DeviceTree + Linux Driver Model，实现改 <code>board.dts.json</code> 即可换硬件。</p>
+
+<h3>最终目录结构</h3>
+<div class="arch-pre">components/
+├── core/          基类 (Lifecycle, EventBus, 日志宏, 配置)
+├── board/         DeviceTree 核心 + Driver 引擎
+├── hal/           ESP-IDF 隔离层 (函数指针表)
+├── drivers/       硬件驱动 (自注册)
+├── algorithm/     DSP 算法 (EQ)
+├── system/        系统编排 (SystemRuntime, TaskManager)
+├── service/       业务服务 (audio/ui/cloud/input)
+│   └── input/     新增：按键输入模块
+├── app/           LVGL GUI
+└── config/        编译时开关</div>
+
+<h3>DeviceTree 工作流</h3>
+<div class="arch-pre">board.dts.json ──解析──▶ device_list
+        board_register_all_drivers() ◀─── DRIVER_REGISTER 宏
+           board_driver_probe_all() ──▶ driver->probe(dev)
+                           设备就绪 (DEVICE_STATUS_PROBED)</div>
+
+<h3>依赖图</h3>
+<div class="arch-pre">app → system → service → board → drivers → hal → ESP-IDF
+                ↓           ↑
+              core ─────────┘</div>
+
+<h3>核心变更</h3>
+<table class="tbl">
+<thead>
+  <tr><th>组件</th><th>动作</th><th>职责</th></tr>
+</thead>
+<tbody>
+  <tr><td>core/</td><td><span class="badge badge-done">新建</span></td><td>Lifecycle、EventBus、日志宏、JSON 配置读取</td></tr>
+  <tr><td>board/</td><td><span class="badge badge-done">增强</span></td><td>DeviceTree 解析 + Driver 注册 + probe 引擎</td></tr>
+  <tr><td>hal/</td><td><span class="badge badge-done">新建</span></td><td>ESP-IDF 隔离层（gpio/spi/i2s/pwm/uart/rmt_led）</td></tr>
+  <tr><td>drivers/</td><td><span class="badge badge-done">新建</span></td><td>硬件驱动（st7789/max98357a/gpio_key/ws2812）</td></tr>
+  <tr><td>system/</td><td><span class="badge badge-done">增强</span></td><td>继承原 middleware，SystemRuntime/TaskManager</td></tr>
+  <tr><td>service/input/</td><td><span class="badge badge-done">新增</span></td><td>KeyInput 按键扫描模块</td></tr>
+  <tr><td>middleware/</td><td><span class="badge badge-ko">删除</span></td><td>拆分到 system/ + core/ + service/input/</td></tr>
+</tbody>
+</table>
+
+<h3>Lifecycle 状态机</h3>
+<div class="arch-pre">Created → Initialized → Started ⇄ Suspended
+  ↑          ↓              ↓
+  └── Stopped ←─────────────┘
+  Any → Failed (不可恢复)</div>
+<p>所有 Service + SystemRuntime 继承 Lifecycle，<code>can_transit()</code> 在每个生命周期方法中检查转换合法性。</p>
+
+<h3>注意</h3>
+<ul>
+  <li><strong>board.dts.json</strong> 中 parent 必须在 child 之前出现（或 depends_on 指向已存在的设备）</li>
+  <li>新增驱动 → <code>components/drivers/</code> 下创建 → 加 DRIVER_REGISTER → <code>board_driver_list.c</code> 加一行</li>
+  <li>更换硬件只需改 board.dts.json 中的引脚号，不修改 C 代码</li>
+</ul>
 
 <!-- ============================================================ -->
 <!-- 🔑 按键系统 -->
@@ -349,7 +439,7 @@
   <strong>当前影响</strong>：音乐播放器、串口调试、歌曲列表 → PREV/NEXT 无法切换焦点区。卡片菜单正常（GPIO 轮询独立驱动）。
 </div>
 <div class="pit">
-  <strong>方案一（推荐）</strong>：GPIO 轮询 — <code>lv_timer</code> 定时读 <code>Button::get_pressed_gpio()</code>，独立于 group。<br>
+  <strong>方案一（推荐）</strong>：GPIO 轮询 — <code>lv_timer</code> 定时读 <code>KeyInput::get_pressed_gpio()</code>，独立于 group。<br>
   <strong>方案二</strong>：<code>lv_group_set_editing(true)</code> — ENTER 进入编辑模式后 PREV/NEXT 由对象自身处理。
 </div>
 </div>
@@ -369,9 +459,9 @@
 <tr><td>CONFIG_SPIRAM_USE_CAPS_ALLOC</td><td>y</td><td>caps 分配器</td></tr>
 <tr><td>CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY</td><td>y</td><td>BSS 段可放 PSRAM</td></tr>
 <tr><td>lcd_stack_size</td><td>24 KB</td><td>LCD 任务栈</td></tr>
-	<tr><td>USE_LVGL_PRAM</td><td>0</td><td>LVGL 帧缓冲优先内部 RAM（防 PSRAM cache 失效）</td></tr>
-	<tr><td>USE_SINGE_BUFFER</td><td>1</td><td>LVGL 单缓冲模式（省内存）</td></tr>
-	<tr><td>USE_LVGL_DMA</td><td>1</td><td>LCD DMA 传输</td></tr>
+<tr><td>USE_LVGL_PRAM</td><td>0</td><td>LVGL 帧缓冲优先内部 RAM（防 PSRAM cache 失效）</td></tr>
+<tr><td>USE_SINGE_BUFFER</td><td>1</td><td>LVGL 单缓冲模式（省内存）</td></tr>
+<tr><td>USE_LVGL_DMA</td><td>1</td><td>LCD DMA 传输</td></tr>
 </tbody>
 </table>
 

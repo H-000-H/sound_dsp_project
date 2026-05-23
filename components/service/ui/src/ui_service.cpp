@@ -19,46 +19,38 @@ UiService& UiService::getInstance()
 
 bool UiService::init()
 {
-    if (m_state != ModuleState::Created && m_state != ModuleState::Stopped)
-    {
-        return true;
-    }
+    if (m_inited) return true;
 
     lv_init();
-    m_state = ModuleState::Initialized;
+    m_inited = true;
     EventBus::getInstance().post(SystemEvent::UiReady);
     return true;
 }
 
 bool UiService::start()
 {
-    if (m_state == ModuleState::Created && !init())
-    {
-        return false;
-    }
+    if (m_started) return true;
+    if (!m_inited && !init()) return false;
 
-    m_state = ModuleState::Started;
+    m_started = true;
     return true;
 }
 
 void UiService::stop()
 {
-    m_state = ModuleState::Stopped;
+    m_started = false;
 }
 
 void UiService::suspend()
 {
-    m_state = ModuleState::Suspended;
+    m_started = false;
 }
 
 void UiService::resume()
 {
-    m_state = ModuleState::Started;
-}
-
-ModuleState UiService::state() const
-{
-    return m_state;
+    if (m_started) return;
+    if (!m_inited) return;
+    m_started = true;
 }
 
 void UiService::run()

@@ -24,6 +24,6 @@ idf_component_register(
         "lvgl/UI/screen/inc"
         "lvgl/res/picture"
         "lvgl/res/lottie"
-    REQUIRES freertos middleware service system board drivers hw_hal json lvgl esp_netif esp_wifi esp_event nvs_flash algorithm
+    REQUIRES core freertos service system board drivers hw_hal json lvgl esp_netif esp_wifi esp_event nvs_flash algorithm
     EMBED_TXTFILES "lvgl/res/lottie/setting.json"
 )

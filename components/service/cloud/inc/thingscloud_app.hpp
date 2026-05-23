@@ -3,9 +3,6 @@
 #include <cstdint>
 #include <functional>
 #include <string>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
 
 struct thingscloud_attr_t
 {
@@ -31,33 +28,24 @@ public:
     void report(float temp, uint32_t humi);
     void run(sensor_cb_t cb = nullptr);
 
-    /** 启动 WiFi 连接（异步），连接成功后自动启动 MQTT（受 mqtt_auto 控制）*/
     void start();
-    /** 断开 WiFi 并终止 MQTT 任务 */
     void stop();
 
     bool is_wifi_connected() const { return m_wifi_connected; }
 
-    /** 手动启停 MQTT（由 UI 设置页调用）*/
     void start_mqtt();
     void stop_mqtt();
 
-    /** MQTT 自动连接开关 — 关闭时 WiFi 连上后也不会启动 MQTT */
     void set_mqtt_auto(bool enable) { m_mqtt_auto = enable; }
     bool is_mqtt_auto() const { return m_mqtt_auto; }
 
-    /** 获取 WiFi 事件组（供内部 wifi_connect_task 使用） */
-    EventGroupHandle_t wifi_evt()
-    {
-        if (!m_wifi_evt) m_wifi_evt = xEventGroupCreate();
-        return m_wifi_evt;
-    }
+    /** 注册 WiFi 状态回调 (由 app 层注册, 解耦 service → app) */
+    using wifi_state_cb_t = void (*)(bool connected);
+    void set_wifi_state_cb(wifi_state_cb_t cb) { m_wifi_state_cb = cb; }
 
-    /** WiFi 连接成功后的回调（由内部 wifi_connect_task 调用） */
+    /** 内部 WiFi 事件组 (void* 隐藏 FreeRTOS EventGroupHandle_t) */
+    void* wifi_evt();
     void on_wifi_connected();
-    /** WiFi 意外断连回调（由 BSP 断连回调触发） */
-    void on_wifi_disconnected();
-    /** 连接超时或被取消时清除 connecting 标志 */
     void on_connect_done() { m_wifi_connecting = false; }
 
 private:
@@ -65,6 +53,8 @@ private:
     ~ThingsCloudApp() = default;
     ThingsCloudApp(const ThingsCloudApp&) = delete;
     ThingsCloudApp& operator=(const ThingsCloudApp&) = delete;
+
+    void on_wifi_disconnected();
 
     std::string m_ssid;
     std::string m_pass;
@@ -76,9 +66,10 @@ private:
     uint32_t m_rgb_gpio = 0;
     float m_last_temp = 0.0f;
     uint32_t m_last_humi = 0;
-    TaskHandle_t m_mqtt_task = nullptr;
+    void* m_mqtt_task = nullptr;          /* TaskHandle_t (隐藏 FreeRTOS 细节) */
+    void* m_wifi_evt = nullptr;           /* EventGroupHandle_t */
+    wifi_state_cb_t m_wifi_state_cb = nullptr;
     volatile bool m_wifi_connected = false;
     volatile bool m_wifi_connecting = false;
-    bool m_mqtt_auto = true;   /* 默认开启（兼容已有行为）*/
-    EventGroupHandle_t m_wifi_evt = nullptr;   /* wifi_connect_task 事件组，支持超时/取消 */
+    bool m_mqtt_auto = true;
 };

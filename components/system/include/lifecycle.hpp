@@ -1,6 +1,8 @@
 #pragma once
 
-enum class ModuleState
+#include <cstdint>
+
+enum class ModuleState : uint8_t
 {
     Created = 0,
     Initialized,
@@ -21,4 +23,7 @@ public:
     virtual void suspend() = 0;
     virtual void resume() = 0;
     virtual ModuleState state() const = 0;
+
+protected:
+    static bool can_transit(ModuleState from, ModuleState to);
 };

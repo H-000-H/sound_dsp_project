@@ -55,6 +55,9 @@ p code, li code { background: var(--surface); padding: 1px 5px; border-radius: 3
 .tag-hal { background: #AF52DE33; color: var(--purple); }
 .tag-bsp { background: #5C5F7333; color: var(--text-dim); }
 .tag-idf { background: #FF3B6B33; color: var(--red); }
+.tag-core { background: #34C75955; color: #69F0AE; }
+.tag-board { background: #FF9F0A55; color: #FFE082; }
+.tag-drv { background: #AF52DE55; color: #CE93D8; }
 .arch-card h4 { font-size: 13px; margin-bottom: 4px; }
 .arch-card p { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
 
@@ -99,7 +102,7 @@ pre {
 <div class="container">
 
 <h1>Sound DSP Project</h1>
-<p class="date">更新日期：2026-05-14 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240</p>
+<p class="date">更新日期：2026-05-23 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240</p>
 
 <div class="alert">
 <strong>⚠️ 注意事项</strong>：项目开发过程中的踩坑记录、API 隐藏行为等详见 <a href="NOTICE.html">NOTICE.html</a>。
@@ -109,32 +112,39 @@ pre {
 <h2>1. 架构图</h2>
 
 <pre>┌─────────────────────────────────────────────────────────────────┐
-│  app 层                                                         │
-│  ┌─────────────────┐  ┌──────────────────────────────────────┐  │
-│  │ ThingsCloudApp   │  │  LVGL 四层架构                       │  │
-│  │ WiFi / MQTT 编排  │  │  core → screen → nav → app + res   │  │
-│  └─────────────────┘  └──────────────────────────────────────┘  │
-│  ┌─────────────────┐  ┌──────────────────────────────────────┐  │
-│  │ FreeRTOS 任务     │  │  继承链：AppBase → XxxApp → XxxImpl │  │
-│  │ lcd_task (Core 0) │  │  SettingsApp   SettingsImpl         │  │
-│  │ mqtt_task (Core 1)│  │  MusicApp  →  MusicImpl  → SongList │  │
-│  └─────────────────┘  │  SerialApp    SerialImpl              │  │
-│                       └──────────────────────────────────────┘  │
+│  app 层 (LVGL GUI)                                               │
+│  ThingsCloud · core(主循环) · screen · nav · settings/music/serial│
 ├─────────────────────────────────────────────────────────────────┤
-│  algorithm 层                              纯计算，零硬件依赖    │
-│  buffer/ (FIFO 环形缓冲) · dsp/ (多段 EQ, 待实现)               │
+│  service 层 — C++ 业务服务                                        │
+│  audio(播放器)  ui(入口)  cloud(MQTT)  input(按键)  network      │
 ├─────────────────────────────────────────────────────────────────┤
-│  service 层                                  网络与协议客户端    │
-│  factory/ (统一工厂入口) · TCP · MQTT                           │
+│  system — SystemRuntime · TaskManager · 服务注册表                │
 ├─────────────────────────────────────────────────────────────────┤
-│  device_hal 层                            C++ 设备抽象层         │
-│  GPIO  LCD  I2S  PWM  Button  BLUE  Time  SPI  RGB  Serial     │
-│  Network  DigitalAmp                                            │
+│  core — Lifecycle · EventBus · ConfigStore · 日志宏              │
 ├─────────────────────────────────────────────────────────────────┤
-│  bsp 层                                     纯 C，直接调 ESP-IDF│
+│  board — DeviceTree 解析 · DRIVER_REGISTER · probe/remove 引擎   │
 ├─────────────────────────────────────────────────────────────────┤
-│  ESP-IDF : FreeRTOS  LWIP  ESP-NETIF  MBEDTLS  DRIVERS          │
+│  drivers — st7789 · max98357a · gpio_key · ws2812 (自注册)       │
+├─────────────────────────────────────────────────────────────────┤
+│  hal — 函数指针表隔离层 (GPIO/SPI/I2S/PWM/RMT_LED)               │
+├─────────────────────────────────────────────────────────────────┤
+│  algorithm — DSP/EQ (Q31 定点, 零硬件依赖)                        │
+├─────────────────────────────────────────────────────────────────┤
+│  ESP-IDF : FreeRTOS LWIP ESP-NETIF MBEDTLS DRIVERS               │
 └─────────────────────────────────────────────────────────────────┘</pre>
+
+<p style="font-size:13px;color:var(--text-dim)">依赖方向: app → system → service → board → drivers → hal → ESP-IDF, core 被 system/service/app 共享</p>
+
+<h3>层约束</h3>
+<table>
+  <tr><th>层级</th><th>不允许依赖</th></tr>
+  <tr><td>board/ (DTS核心)</td><td>无上层模块</td></tr>
+  <tr><td>hal/</td><td>无上层模块</td></tr>
+  <tr><td>drivers/</td><td>UI, app, service, lvgl</td></tr>
+  <tr><td>algorithm/</td><td>UI, RTOS, HAL, 任何硬件</td></tr>
+  <tr><td>service/</td><td>不直接调 HAL/ESP-IDF（全通过 driver）</td></tr>
+  <tr><td>core/</td><td>无上层模块</td></tr>
+</table>
 
 <h3>导航流</h3>
 <div class="flow">
@@ -150,17 +160,16 @@ pre {
 <h3>模块职责一览</h3>
 <table>
   <tr><th>模块</th><th>解决什么问题</th></tr>
-  <tr><td><strong>lvgl/</strong></td><td>给 240×240 屏幕提供 GUI：锁屏、菜单、设置、播放器、串口终端</td></tr>
-  <tr><td><strong>core/</strong></td><td>LVGL 初始化、GPIO→LV_KEY 映射、lvgl_defer 异步调度</td></tr>
-  <tr><td><strong>screen/</strong></td><td>锁屏 + 状态栏 (WiFi/蓝牙/电量/音量) + Lottie 齿轮动画</td></tr>
-  <tr><td><strong>nav/</strong></td><td>3 卡轮播菜单，AppBase* 指针管理应用跳转</td></tr>
-  <tr><td><strong>app/settings</strong></td><td>WiFi/蓝牙/MQTT/低功耗开关 + 亮度调节 UI 和硬件控制</td></tr>
-  <tr><td><strong>app/music</strong></td><td>WAV 播放、进度控制、选歌列表、播放模式切换</td></tr>
-  <tr><td><strong>app/serial</strong></td><td>USB-JTAG 串口数据显示、日志捕获、HEX/终端模式</td></tr>
-  <tr><td><strong>ThingsCloud</strong></td><td>WiFi 连接、MQTT 协议、数据上报、命令接收全生命周期</td></tr>
-  <tr><td><strong>device_hal/</strong></td><td>将 BSP 的 C API 封装为 C++ 类，对上层隐藏 ESP-IDF 细节</td></tr>
-  <tr><td><strong>factory/</strong></td><td>统一设备获取入口，解耦业务层和硬件层</td></tr>
-  <tr><td><strong>algorithm/dsp</strong></td><td>多段 EQ 滤波（待实现），纯算法不依赖硬件</td></tr>
+  <tr><td><strong>app/lvgl</strong></td><td>240×240 屏幕 GUI：锁屏、菜单、设置、播放器、串口终端</td></tr>
+  <tr><td><strong>core/</strong></td><td>Lifecycle/EventBus 基类、日志宏、JSON 配置读取，零硬件依赖</td></tr>
+  <tr><td><strong>system/</strong></td><td>系统编排：SystemRuntime、TaskManager、服务注册表、驱动注册列表</td></tr>
+  <tr><td><strong>service/input</strong></td><td>按键 GPIO 轮询扫描、时间戳消抖、LVGL 回调用</td></tr>
+  <tr><td><strong>service/audio</strong></td><td>MP3 解码、功放控制、音量管理</td></tr>
+  <tr><td><strong>service/cloud</strong></td><td>WiFi 连接、MQTT 协议、数据上报全生命周期</td></tr>
+  <tr><td><strong>board/</strong></td><td>board.dts.json 解析、设备链表构建、driver 注册和 probe 引擎</td></tr>
+  <tr><td><strong>hal/</strong></td><td>ESP-IDF 函数指针封装，驱动不直接调 IDF</td></tr>
+  <tr><td><strong>drivers/</strong></td><td>st7789 显示、max98357a 功放、gpio_key 按键、ws2812 LED（自注册）</td></tr>
+  <tr><td><strong>algorithm/dsp</strong></td><td>多段 EQ 滤波、音量平滑（Q31 定点），零硬件依赖</td></tr>
 </table>
 
 <!-- ============================================================ -->
@@ -279,15 +288,15 @@ pre {
 <div class="cards">
   <div class="card">
     <div class="title">📐 架构规则</div>
-    <p>app 不直接引用 BSP · algorithm 零硬件依赖 · 新架构先问</p>
+    <p>app → system → service → board → drivers → hal → IDF · algorithm 零硬件依赖 · core 无上层依赖</p>
   </div>
   <div class="card">
     <div class="title">📝 文档规则</div>
-    <p>改完写 NOTICE · 文件带日期 · 不擅自改代码</p>
+    <p>改完写 NOTICE · 文件带日期 · 不擅自改代码 · 新架构先问</p>
   </div>
   <div class="card">
     <div class="title">🔧 C++ 规范</div>
-    <p>禁用 RTTI/异常 · 回调用静态成员函数 · lvgl_defer 防死锁</p>
+    <p>禁用 RTTI/异常 · 回调用静态方法/函数指针 · 新增驱动三步骤：创建 → DRIVER_REGISTER → driver_list 加一行</p>
   </div>
 </div>
 
@@ -303,33 +312,47 @@ pre {
     <td>返回上级</td></tr>
 </table>
 
-<p style="font-size:13px;color:var(--text-dim)">检测流程：GPIO 中断 → ISR 入队 → Button::process() 出队 → get_pressed_gpio() 读取</p>
+<p style="font-size:13px;color:var(--text-dim)">检测流程：KeyInput::process() → gpio_key_scan() → 消抖 → get_pressed_gpio()</p>
 
 <!-- ============================================================ -->
-<h2>5. DSP / EQ（待实现）</h2>
+<h2>5. DeviceTree 硬件描述</h2>
 
-<p>多段均衡器，Biquad 级联：</p>
+<p>JSON 格式的 mini DeviceTree（<code>components/board/board.dts.json</code>）作为唯一硬件配置入口：</p>
+<pre>{
+    "soc": "esp32s3",
+    "devices": [
+        { "name": "i2s0", "compatible": "esp32,i2s-bus",
+          "properties": { "ws_pin": 4, "bclk_pin": 5, "dout_pin": 6 } },
+        { "name": "display", "compatible": "sitronix,st7789",
+          "depends_on": "spi0",
+          "properties": { "width": 240, "height": 240,
+            "dc": 3, "reset": 4, "backlight": 15 } }
+    ]
+}</pre>
+
+<p><strong>工作流程</strong>：</p>
+<pre>board.dts.json ──解析──▶ device_list
+         board_register_all_drivers() ◀─── DRIVER_REGISTER 宏
+            board_driver_probe_all() ──▶ driver->probe(dev)
+                              设备就绪 (DEVICE_STATUS_PROBED)</pre>
+
+<p>更换硬件只需改 <code>board.dts.json</code> 中的引脚号，无需改 C 代码。</p>
+
+<!-- ============================================================ -->
+<h2>6. DSP / EQ</h2>
+
+<p>多段均衡器，Biquad 级联，Q31 定点实现：</p>
 <pre>        b₀ + b₁·z⁻¹ + b₂·z⁻²
 H(z) = ──────────────────────
         a₀ + a₁·z⁻¹ + a₂·z⁻²</pre>
 <ul>
   <li>可配置 N 段 EQ（典型 5 段）</li>
-  <li>Q15/Q31 定点运算</li>
-  <li>先 py/dsp.ipynb 验证 → 同步到 dsp.c</li>
+  <li>Q31 定点运算（RBJ 系数 → 定点转换）</li>
+  <li>音量平滑：一阶 IIR，Q15 系数 VOLUME_SMOOTH_ALPHA_Q15 = 33</li>
 </ul>
 
-<!-- ============================================================ -->
-<h2>6. 工厂模式</h2>
-<pre>auto* wifi  = factory_config::network::get_wifi();
-auto* mqtt  = factory_config::network::get_mqtt();
-auto* lcd   = factory_config::screen::get_device();
-auto* led   = factory_config::led::get_device();
-auto* time  = factory_config::time::get_time();
-auto* btn   = factory_config::button::get_button();
-auto* blue  = factory_config::blue::get_blue();</pre>
-
 <div style="margin-top:40px;padding-top:12px;border-top:1px solid var(--border);color:var(--text-dim);font-size:12px">
-更新日期：2026-05-14 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240
+更新日期：2026-05-23 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240
 </div>
 
 </div>

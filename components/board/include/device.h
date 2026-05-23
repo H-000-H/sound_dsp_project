@@ -4,15 +4,20 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "board_nodes.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* ── 设备树常量 ── */
-#define MAX_DEVICES   32
+#define MAX_DEVICES   DEV_ID_COUNT
 
-/* ── 设备节点 — 不透明类型 ── */
-typedef struct device_node device_t;
+/* ── 编译期属性: dtc-lite 在构建期展开, runtime 只读静态表 ── */
+typedef struct {
+    const char* key;
+    const char* value;
+} device_prop_t;
 
 /* ── 设备状态 ── */
 typedef enum {
@@ -21,6 +26,18 @@ typedef enum {
     DEVICE_STATUS_ERROR,
     DEVICE_STATUS_PROBED,
 } device_status_t;
+
+/* ── 设备节点 ── */
+typedef struct device_node {
+    const char*        name;
+    const char*        compatible;
+    device_status_t    status;
+    int                prop_count;
+    const device_prop_t* props;
+    int                dep_count;
+    const device_id_t* deps;
+    void*              priv_data;
+} device_t;
 
 /* ── 查找设备 ── */
 device_t* device_find(const char* name);

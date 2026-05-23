@@ -1,0 +1,93 @@
+/dts-v1/;
+
+/ {
+    model = "sound_dsp_board_v1";
+
+    aliases {
+        display0 = &lcd0;
+        audio0 = &speaker_amp0;
+        input0 = &buttons0;
+        console0 = &uart_debug;
+    };
+
+    chosen {
+        stdout = &uart_debug;
+        display = &lcd0;
+        audio-out = &speaker_amp0;
+        input = &buttons0;
+    };
+
+    soc {
+        spi2: spi@2 {
+            compatible = "esp32,spi-bus";
+            mosi = <5>;
+            miso = <-1>;
+            sclk = <4>;
+            dma_chan = <-1>;
+        };
+
+        i2s_audio0: i2s@0 {
+            compatible = "esp32,i2s-bus";
+            ws = <13>;
+            bclk = <12>;
+            dout = <11>;
+            din = <-1>;
+            sample_rate = <44100>;
+            bits_per_sample = <16>;
+        };
+
+        uart_debug: uart@0 {
+            compatible = "esp32,uart";
+            tx_pin = <43>;
+            rx_pin = <44>;
+            baud_rate = <115200>;
+            data_bits = <8>;
+            stop_bits = <1>;
+            parity = <0>;
+        };
+    };
+
+    display {
+        lcd0: display@0 {
+            compatible = "sitronix,st7789";
+            depends_on = <&spi2>;
+            dc = <6>;
+            reset = <7>;
+            backlight = <15>;
+            spi_freq_hz = <80000000>;
+            width = <240>;
+            height = <240>;
+            bl_active_high = <1>;
+        };
+    };
+
+    audio {
+        speaker_amp0: amplifier@0 {
+            compatible = "maxim,max98357a";
+            depends_on = <&i2s_audio0>;
+            sdn_pin = <10>;
+            active_level = <1>;
+        };
+    };
+
+    input {
+        buttons0: gpio-keys@0 {
+            compatible = "gpio-keys";
+            next_pin = <16>;
+            prev_pin = <17>;
+            enter_pin = <3>;
+            esc_pin = <46>;
+            debounce_ms = <50>;
+        };
+    };
+
+    leds {
+        rgb_led0: led@0 {
+            compatible = "worldsemi,ws2812";
+            gpio = <48>;
+            led_count = <1>;
+            brightness = <28>;
+            rmt_resolution_hz = <10000000>;
+        };
+    };
+};

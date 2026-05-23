@@ -3,9 +3,16 @@
 #include "hal_pwm.h"
 #include "thingscloud_app.hpp"
 #include "mqtt_client.hpp"
+#include "ui/screen/inc/status_bar.hpp"
 
 /* 全局实例（供 card_menu 引用）*/
 SettingsImpl g_settings_impl;
+
+/* 注册 WiFi 状态回调 (app 注入 service, 避免反向依赖) */
+static bool s_wifi_cb_registered = []() {
+    ThingsCloudApp::get_instance().set_wifi_state_cb(ui_set_wifi_state);
+    return true;
+}();
 
 void SettingsImpl::on_wifi_toggle(bool on)
 {

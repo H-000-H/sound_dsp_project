@@ -58,3 +58,15 @@ TaskHandle_t TaskManager::create(const board_task_config_t& config, TaskEntry en
 
     return handle;
 }
+
+TaskHandle_t TaskManager::create_task(const char* name, uint32_t stack_size,
+                                       uint32_t priority, TaskEntry entry,
+                                       void* param, int core_id)
+{
+    board_task_config_t cfg = {};
+    cfg.name = name ? name : "unknown";
+    cfg.stack_size = stack_size;
+    cfg.priority = priority;
+    cfg.core_id = core_id;
+    return create(cfg, entry, param);
+}

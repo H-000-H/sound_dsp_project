@@ -1,18 +1,20 @@
 #pragma once
 
-#include "lifecycle.hpp"
+#include <cstdint>
 
-class CloudService : public Lifecycle
+#include "capability/led_engine.hpp"
+
+class CloudService
 {
 public:
     static CloudService& getInstance();
 
-    bool init() override;
-    bool start() override;
-    void stop() override;
-    void suspend() override;
-    void resume() override;
-    ModuleState state() const override;
+    bool init();
+    bool start();
+    void stop();
+    void suspend();
+    void resume();
+    bool is_active() const { return m_inited; }
 
     void run();
 
@@ -21,5 +23,7 @@ private:
     CloudService(const CloudService&) = delete;
     CloudService& operator=(const CloudService&) = delete;
 
-    ModuleState m_state = ModuleState::Created;
+    bool m_inited = false;
+    bool m_started = false;
+    led_engine_t m_led;
 };

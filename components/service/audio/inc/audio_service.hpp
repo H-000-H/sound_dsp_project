@@ -2,20 +2,20 @@
 
 #include <cstdint>
 
+#include "capability/audio_engine.hpp"
 #include "device.h"
-#include "lifecycle.hpp"
 
-class AudioService : public Lifecycle
+class AudioService
 {
 public:
     static AudioService& getInstance();
 
-    bool init() override;
-    bool start() override;
-    void stop() override;
-    void suspend() override;
-    void resume() override;
-    ModuleState state() const override;
+    bool init();
+    bool start();
+    void stop();
+    void suspend();
+    void resume();
+    bool is_active() const { return m_inited; }
 
     void playMp3(uint8_t* data, uint32_t len);
     void setVolume(float volume);
@@ -25,6 +25,8 @@ private:
     AudioService(const AudioService&) = delete;
     AudioService& operator=(const AudioService&) = delete;
 
+    audio_engine_t m_engine = {};
     device_t* m_amp_dev = nullptr;
-    ModuleState m_state = ModuleState::Created;
+    bool m_inited = false;
+    bool m_started = false;
 };

@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "src/mp3.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        board
+        hw_hal
+        core
+        algorithm
+        chmorgan__esp-libhelix-mp3
+)

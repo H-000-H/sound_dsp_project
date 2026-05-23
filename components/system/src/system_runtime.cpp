@@ -5,6 +5,8 @@
 #include "cloud_service.hpp"
 #include "device.h"
 #include "driver.h"
+#include "esp_event.h"
+#include "esp_netif.h"
 #include "event_bus.hpp"
 #include "system_log.hpp"
 #include "task_manager.hpp"
@@ -30,10 +32,16 @@ SystemRuntime& SystemRuntime::getInstance()
 
 bool SystemRuntime::init()
 {
-    if (m_state != ModuleState::Created && m_state != ModuleState::Stopped)
+    if (m_state == ModuleState::Initialized) return true;
+    if (!can_transit(m_state, ModuleState::Initialized))
     {
-        return true;
+        m_state = ModuleState::Failed;
+        return false;
     }
+
+    /* ── 系统级网络栈初始化 (为 WiFi / TCP/IP 做准备) ── */
+    esp_netif_init();
+    esp_event_loop_create_default();
 
     /* ── DeviceTree + Driver 模型初始化 ── */
     SYS_LOGI(kTag, "=== DeviceTree init ===");
@@ -42,9 +50,6 @@ bool SystemRuntime::init()
         SYS_LOGE(kTag, "device_tree_init failed");
         /* 不阻断, 旧代码仍可工作 */
     }
-
-    SYS_LOGI(kTag, "=== Driver registration ===");
-    board_register_all_drivers();
 
     SYS_LOGI(kTag, "=== Driver probe ===");
     board_driver_probe_all();
@@ -79,14 +84,17 @@ bool SystemRuntime::init()
 
 bool SystemRuntime::start()
 {
-    if (m_state == ModuleState::Started)
+    if (m_state == ModuleState::Started) return true;
+    if (!can_transit(m_state, ModuleState::Started))
     {
-        return true;
-    }
-
-    if (m_state == ModuleState::Created && !init())
-    {
-        return false;
+        if ((m_state == ModuleState::Created || m_state == ModuleState::Stopped) && init())
+        {
+            /* fall through */
+        }
+        else
+        {
+            return false;
+        }
     }
 
     AudioService::getInstance().start();
@@ -109,6 +117,7 @@ bool SystemRuntime::start()
 
 void SystemRuntime::stop()
 {
+    if (!can_transit(m_state, ModuleState::Stopped)) return;
     CloudService::getInstance().stop();
     UiService::getInstance().stop();
     AudioService::getInstance().stop();
@@ -117,6 +126,7 @@ void SystemRuntime::stop()
 
 void SystemRuntime::suspend()
 {
+    if (!can_transit(m_state, ModuleState::Suspended)) return;
     CloudService::getInstance().suspend();
     UiService::getInstance().suspend();
     AudioService::getInstance().suspend();
@@ -125,6 +135,7 @@ void SystemRuntime::suspend()
 
 void SystemRuntime::resume()
 {
+    if (!can_transit(m_state, ModuleState::Started)) return;
     AudioService::getInstance().resume();
     UiService::getInstance().resume();
     CloudService::getInstance().resume();

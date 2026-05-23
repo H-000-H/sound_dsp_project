@@ -1,5 +1,6 @@
 #include "cloud_service.hpp"
 
+#include "capability/led_engine.hpp"
 #include "config.hpp"
 #include "device.h"
 #include "event_bus.hpp"
@@ -7,13 +8,10 @@
 #include "freertos/task.h"
 #include "mqtt_client.hpp"
 #include "system_log.hpp"
-#include "ws2812_driver.h"
 
 #include <cstdio>
 #include <cstring>
 
-#include <esp_event.h>
-#include <esp_netif.h>
 #include <esp_wifi.h>
 
 static constexpr const char* kTag = "CloudService";
@@ -45,14 +43,9 @@ CloudService& CloudService::getInstance()
 
 bool CloudService::init()
 {
-    if (m_state != ModuleState::Created && m_state != ModuleState::Stopped)
-    {
-        return true;
-    }
+    if (m_inited) return true;
 
     /* ── WiFi init (STA mode) ── */
-    esp_netif_init();
-    esp_event_loop_create_default();
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -64,12 +57,9 @@ bool CloudService::init()
     esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
     esp_wifi_start();
 
-    /* ── RGB LED init ── */
-    device_t* led_dev = device_find("rgb_led0");
-    if (led_dev)
-    {
-        ws2812_init(led_dev);
-    }
+    /* ── RGB LED init (via capability) ── */
+    led_engine_init_struct(&m_led);
+    m_led.init(&m_led);
 
     /* ── MQTT init ── */
     MqttConfig mqtt_config = {};
@@ -83,42 +73,38 @@ bool CloudService::init()
     mqtt.set_config(mqtt_config);
     mqtt.init(cloud_mqtt_event, this);
 
-    m_state = ModuleState::Initialized;
+    m_inited = true;
     EventBus::getInstance().post(SystemEvent::CloudReady);
     return true;
 }
 
 bool CloudService::start()
 {
-    if (m_state == ModuleState::Created && !init())
-    {
-        return false;
-    }
+    if (m_started) return true;
+    if (!m_inited && !init()) return false;
 
     esp_wifi_connect();
     MqttClient::get_instance().connect();
-    m_state = ModuleState::Started;
+    m_started = true;
     return true;
 }
 
 void CloudService::stop()
 {
-    m_state = ModuleState::Stopped;
+    if (!m_inited) return;
+    m_started = false;
 }
 
 void CloudService::suspend()
 {
-    m_state = ModuleState::Suspended;
+    m_started = false;
 }
 
 void CloudService::resume()
 {
-    m_state = ModuleState::Started;
-}
-
-ModuleState CloudService::state() const
-{
-    return m_state;
+    if (m_started) return;
+    if (!m_inited) return;
+    m_started = true;
 }
 
 void CloudService::run()

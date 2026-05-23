@@ -191,7 +191,186 @@
 
 ---
 
-## 15. 未解决的问题
+---
+
+## 16. 架构重建：Linux Driver Model + DeviceTree + 组件解耦
+
+> 2026-05-23 · 大规模架构优化
+
+### 16.1 背景
+
+原先的硬件描述分散在 `config/config.hpp`（311 行引脚定义）、`board/` C 结构体和 `bsp/` 多处，更换硬件需要改多处代码。引入 **JSON 格式的 mini DeviceTree** 和 **Linux Driver Model**，实现改 `board.dts.json` 即可换硬件连接。
+
+### 16.2 核心变更
+
+**① DeviceTree (board.dts.json)**
+- 所有硬件设备统一在 `components/board/board.dts.json` 描述，包含 compatible、properties、depends_on
+- 使用 ESP-IDF `EMBED_FILES` 编译进固件，不依赖文件系统
+- `components/board/src/board_dts.c` 在启动时解析并构建设备链表
+
+**② Linux Driver Model**
+- `DRIVER_REGISTER` 宏让每个驱动自注册（compatible + probe + remove）
+- `board_driver_probe_all()` 遍历设备、匹配 compatible、递归 probe parent 再 probe child
+- `board_driver_list.c` 显式列出所有驱动注册函数，替代链接器段收集模式
+- probe 成功设 `DEVICE_STATUS_PROBED`，失败设 `DEVICE_STATUS_ERROR`
+
+**③ HAL 硬件隔离层**
+- `components/hal/` 层通过函数指针表封装 ESP-IDF API
+- 驱动通过 HAL 操作硬件，不直接调用 ESP-IDF（`hal_spi_bus_t`, `hal_gpio_config_t` 等）
+- 新建 `hal_rmt_led.h/c` 用于 WS2812 驱动
+
+**④ 中间件拆分**
+- `middleware/` 拆分为 `system/`（服务编排）+ `service/input/`（按键输入）
+- 新建 `core/` 组件：`lifecycle`, `event_bus`, `system_log`, `config_store`
+- 消除 `system` ⇄ `service` 循环依赖
+
+### 16.3 新增/更改的组件
+
+| 组件 | 动作 | 职责 |
+|------|------|------|
+| `core/` | **新建** | 基类抽象：Lifecycle、EventBus、日志宏、JSON 配置读取 |
+| `board/` | **增强** | DeviceTree 解析 + Driver 注册 + probe 引擎 |
+| `hal/` | **新建** | ESP-IDF 隔离层（gpio/spi/i2s/pwm/uart/rmt_led） |
+| `drivers/` | **新建** | 硬件驱动（st7789/max98357a/gpio_key/ws2812），自注册 |
+| `system/` | **继承原 middleware** | SystemRuntime、TaskManager、服务注册表 |
+| `service/` | **增强** | 增加 `input/` 子模块（KeyInput） |
+| `middleware/` | **删除** | 拆分到 system/ + core/ + service/input/ |
+
+### 16.4 目录结构（最终）
+
+```
+components/
+├── core/          基类 (Lifecycle, EventBus, 日志宏, 配置)
+├── board/         DeviceTree 核心 + Driver 引擎
+├── hal/           ESP-IDF 隔离层 (函数指针表)
+├── drivers/       硬件驱动 (自注册)
+├── algorithm/     DSP 算法 (EQ)
+├── system/        系统编排 (SystemRuntime, TaskManager)
+├── service/       业务服务 (audio/ui/cloud/input)
+├── app/           LVGL GUI
+├── config/        编译时开关
+```
+
+### 16.5 依赖关系
+
+```
+app → system → service → board → drivers → hal → ESP-IDF
+                ↓           ↑
+              core ─────────┘
+```
+
+各层约束：
+
+| 层级 | 不允许依赖 |
+|------|-----------|
+| board/ (DTS 核心) | 无上层模块 |
+| hal/ | 无上层模块 |
+| drivers/ | UI, app, service, lvgl |
+| algorithm/ | UI, RTOS, HAL, 任何硬件 |
+| service/ | 不直接调 HAL/ESP-IDF（全通过 driver） |
+| core/ | 无上层模块 |
+| system/ | 协调层，不直接调 hardware |
+
+### 16.6 Lifecycle 状态机
+
+所有 Service + SystemRuntime 继承 Lifecycle，添加状态转换守卫：
+
+```
+Created → Initialized → Started ⇄ Suspended
+  ↑          ↓              ↓
+  └── Stopped ←─────────────┘
+  Any → Failed (不可恢复)
+```
+
+`can_transit()` 在 `core/src/lifecycle.cpp` 实现，每个生命周期方法调用前检查转换合法性，非法转换将标记 `Failed` 状态。
+
+### 16.7 注意
+
+- `board.dts.json` 中依赖顺序重要：parent 必须在 child 之前出现（或 `depends_on` 指向已存在的设备）
+- 所有 probe 调用的 `hal_*` 函数必须能在 probe 阶段正常工作（ESP-IDF 驱动已初始化）
+- 新增驱动 → `components/drivers/` 下创建 → 加 `DRIVER_REGISTER` → `board_driver_list.c` 加一行
+- `EQ.h` 全局变量定义已在上一轮移入 `EQ.c`，头文件仅有 `extern` 声明（防 multiple definition）
+
+### 16.8 编译期 DTS 升级 (2026-05-23)
+
+从运行时 JSON 解析升级为**编译期 MCU Lite DTS**：
+
+**变更：**
+- `board.dts.json` → **`board.dts`**（MCU Lite DTS 格式，`/dts-v1/;` 头 + `&label` phandle 语法）
+- `board_dts.c`（启动时 cJSON 解析） → **`board_device.c`**（使用生成的静态 `device_t` 表）
+- `board.dts` 在构建时由 **`tools/dtc-lite.py`** 解析，生成 `board_nodes.h`（DEV_ID 枚举）、`board_devtable.c`（只读 `.rodata` 设备表）、`board_probe.c`（probe 函数指针表 + 拓扑排序顺序）
+- `DRIVER_REGISTER` 宏产生的函数由 dtc-lite.py 编译期扫描收录，**无运行时 strcmp 匹配**
+- `board_driver_probe_all()` 改按拓扑排序顺序调用，不再递归 probe parent
+- `board_driver_list.c` 弃用（被生成的 probe 表取代）
+- **删除 cJSON 依赖**，`CMakeLists.txt` 不再 `REQUIRES json`
+
+**关键点：**
+- `tools/dtc-lite.py` 是纯 Python tokenizer + 递归下降解析器，通过 `find_package(Python3)` 在构建时执行
+- 生成的头文件输出到 `${CMAKE_CURRENT_BINARY_DIR}/generated/`，通过 `target_sources()` 加入编译
+- soc 级别设备（esp32,spi-bus / esp32,i2s-bus / esp32,uart）在验证时跳过，无需注册驱动
+- 新增硬件 → 改 `board.dts`（添加设备节点 + compatible）→ 创建驱动 .c 文件（加 `DRIVER_REGISTER`）→ 构建
+
+---
+
+---
+
+## 17. 架构重建第二阶段：Media层 + Capability边界 + System单一Runtime
+
+> 2026-05-23 · 解决 5 个隐性耦合风险点
+
+### 17.1 变更概要
+
+| 风险点 | 问题 | 修改 |
+|--------|------|------|
+| ① MP3 放在 algorithm/ | 纯算法组件混入解码器 + buffer + I2S sink | 新建 `media/` 层，MP3 移入 |
+| ② core/ 垃圾桶 | EventBus + config_store + 杂项混杂 | config_store 移入 `config/`，core 仅保留 event_bus |
+| ③ service/driver 边界模糊 | AudioService 可直接调 I2S/buffer | 新建 `capability/` 层（led_engine, input_engine），service 只调 capability |
+| ④ system 非唯一 runtime 所有者 | CloudService 直接调 esp_netif_init/esp_event_loop_create_default | 移入 `SystemRuntime::init()` |
+| ⑤ app 接触 FreeRTOS | thingscloud_app 直接调 xTaskCreatePinnedToCore | 改用 `board_task_create()`（board/ 组件提供） |
+
+### 17.2 新增组件
+
+**media/** — 媒体管线层
+- `media/mp3.hpp` — MP3 解码器封装，含 I2S 输出、EQ 滤波、音量控制
+- 位于 algorithm/（纯算法）和 capability/（硬能力入口）之间
+- `REQUIRES board hw_hal core algorithm chmorgan__esp-libhelix-mp3`
+
+**capability/** — 硬能力入口层
+- `led_engine.hpp/c` — C 函数指针表封装 WS2812，service 通过 `device_find("rgb_led0")` 获取设备
+- `input_engine.hpp/c` — C 函数指针表封装 gpio_key，service 通过 `device_find("buttons0")` 获取设备
+- 约束：service 不直接调 driver/HAL，全通过 capability
+
+### 17.3 关键设计决策
+
+**board_task_create()** 置于 board/ 组件：
+- system/TaskManager 依赖 service，service 无法反向依赖 system
+- board/ 是最底层组件，board_task_create() 作为 C 封装绕开循环依赖
+- system/TaskManager 的 create_task() 也基于它实现
+
+**config_store** 独立为 config/ 组件：
+- `EMBED_TXTFILES` 路径相对于组件目录：`../../assets/config/system_config.json`
+- `INCLUDE_DIRS "include" "."` 同时暴露新式 include/ 和根目录 config.hpp
+
+### 17.4 依赖约束（最终）
+
+```
+app → system → service → capability → board → drivers → hal → ESP-IDF
+                ↓                                        ↑
+              media ──────────────────────────────────────┤
+              algorithm (纯 DSP, 无硬件依赖)               │
+              config (EMBED_TXTFILES, 无框架依赖) ────────┘
+```
+
+| 层级 | 不允许依赖 |
+|------|-----------|
+| media/ | service, app, ui |
+| capability/ | service, app, ui |
+| service/ | driver, HAL, ESP-IDF（全通过 capability） |
+| system/ | app, ui（可调 service 生命周期） |
+
+---
+
+## 18. 未解决的问题
 
 ### PC 关闭串口时系统自动重启
 

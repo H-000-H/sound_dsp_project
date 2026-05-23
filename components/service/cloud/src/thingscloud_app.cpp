@@ -1,5 +1,4 @@
 #include "thingscloud_app.hpp"
-#include "ui/screen/inc/status_bar.hpp"
 
 #include <cstring>
 
@@ -12,9 +11,14 @@
 #include <freertos/event_groups.h>
 #include <freertos/task.h>
 
+#include "capability/led_engine.hpp"
 #include "device.h"
 #include "mqtt_client.hpp"
-#include "ws2812_driver.h"
+#include "task_utils.h"
+
+/* Helper casts for FreeRTOS types hidden behind void* in the public header */
+static inline EventGroupHandle_t eg(void* p) { return (EventGroupHandle_t)p; }
+static inline TaskHandle_t th(void* p) { return (TaskHandle_t)p; }
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_CANCEL_BIT    BIT1
@@ -30,7 +34,7 @@ static constexpr uint32_t COLOR_CYAN    = 0x00FFFF;
 static constexpr uint32_t COLOR_MAGENTA = 0xFF00FF;
 static constexpr uint32_t COLOR_PINK    = 0xFFC0CB;
 
-static device_t* s_led_dev = nullptr;
+static led_engine_t s_led_eng;
 
 namespace
 {
@@ -91,11 +95,19 @@ uint32_t color_name_to_u32(const char* name)
 
 static void set_led_rgb(uint32_t color)
 {
-    if (!s_led_dev) return;
+    if (!s_led_eng._impl) return;
     uint8_t r = (color >> 16) & 0xFF;
     uint8_t g = (color >> 8) & 0xFF;
     uint8_t b = color & 0xFF;
-    ws2812_set_color(s_led_dev, r, g, b);
+    s_led_eng.set_color(&s_led_eng, r, g, b);
+}
+
+}  // 匿名命名空间
+
+void* ThingsCloudApp::wifi_evt()
+{
+    if (!m_wifi_evt) m_wifi_evt = (void*)xEventGroupCreate();
+    return m_wifi_evt;
 }
 
 static void on_wifi_got_ip(void* arg, esp_event_base_t base, int32_t id, void* data)
@@ -103,8 +115,6 @@ static void on_wifi_got_ip(void* arg, esp_event_base_t base, int32_t id, void* d
     EventGroupHandle_t evt_group = (EventGroupHandle_t)arg;
     xEventGroupSetBits(evt_group, WIFI_CONNECTED_BIT);
 }
-
-}  // 匿名命名空间
 
 /*====================================================================*/
 /*  MQTT 事件回调                                                     */
@@ -153,13 +163,13 @@ static void mqtt_event_cb(MqttEvent event, const char* topic, const uint8_t* dat
         if (attr.rgb_led_on)
         {
             ESP_LOGI("MQTT", "RGB LED ON (white)");
-            ws2812_set_brightness(s_led_dev, 255);
+            s_led_eng.set_brightness(&s_led_eng, 255);
             set_led_rgb(COLOR_WHITE);
         }
         else
         {
             ESP_LOGI("MQTT", "RGB LED OFF (black)");
-            ws2812_set_brightness(s_led_dev, 0);
+            s_led_eng.set_brightness(&s_led_eng, 0);
             set_led_rgb(COLOR_BLACK);
         }
     }
@@ -176,7 +186,7 @@ static void mqtt_event_cb(MqttEvent event, const char* topic, const uint8_t* dat
         if (brightness < 0) brightness = 0;
         if (brightness > 255) brightness = 255;
         ESP_LOGI("MQTT", "RGB brightness=%d", brightness);
-        ws2812_set_brightness(s_led_dev, (uint8_t)brightness);
+        s_led_eng.set_brightness(&s_led_eng, (uint8_t)brightness);
     }
 }
 
@@ -215,12 +225,11 @@ void ThingsCloudApp::init()
     if (m_mqtt_user.empty()) m_mqtt_user = CONFIG_THINGSCLOUD_MQTT_USERNAME;
     if (m_mqtt_pass.empty()) m_mqtt_pass = CONFIG_THINGSCLOUD_MQTT_PASSWORD;
 
-    /* ── LED ── */
-    s_led_dev = device_find("rgb_led0");
-    if (s_led_dev)
+    /* ── LED (via capability) ── */
+    led_engine_init_struct(&s_led_eng);
+    if (s_led_eng.init(&s_led_eng) == 0)
     {
-        ws2812_init(s_led_dev);
-        ws2812_set_brightness(s_led_dev, 255);
+        s_led_eng.set_brightness(&s_led_eng, 255);
         set_led_rgb(COLOR_BLACK);
     }
 
@@ -259,7 +268,7 @@ static void wifi_connect_task(void* param)
     ThingsCloudApp* app = (ThingsCloudApp*)param;
 
     {
-        EventGroupHandle_t eg = app->wifi_evt();
+        EventGroupHandle_t eg = (EventGroupHandle_t)app->wifi_evt();
         xEventGroupClearBits(eg, WIFI_CONNECTED_BIT | WIFI_CANCEL_BIT);
     }
 
@@ -270,7 +279,7 @@ static void wifi_connect_task(void* param)
 
     esp_wifi_connect();
 
-    EventBits_t bits = xEventGroupWaitBits(app->wifi_evt(),
+    EventBits_t bits = xEventGroupWaitBits((EventGroupHandle_t)app->wifi_evt(),
                                            WIFI_CONNECTED_BIT, pdTRUE, pdFALSE,
                                            pdMS_TO_TICKS(CONFIG_THINGSCLOUD_WIFI_TIMEOUT_MS));
 
@@ -318,14 +327,14 @@ void ThingsCloudApp::start()
 
     m_wifi_connecting = true;
 
-    xTaskCreatePinnedToCore(wifi_connect_task, "wifi_con", 8*1024, this, 5, NULL, 1);
+    board_task_create("wifi_con", 8*1024, 5, wifi_connect_task, this, 1);
 }
 
 void ThingsCloudApp::on_wifi_connected()
 {
     m_wifi_connected = true;
     m_wifi_connecting = false;
-    ui_set_wifi_state(true);
+    if (m_wifi_state_cb) m_wifi_state_cb(true);
     if (m_mqtt_auto)
     {
         start_mqtt();
@@ -337,8 +346,8 @@ void ThingsCloudApp::on_wifi_connected()
 void ThingsCloudApp::on_wifi_disconnected()
 {
     m_wifi_connected = false;
-    ui_set_wifi_state(false);
-    ESP_LOGI("ThingsCloud", "WiFi unexpectedly disconnected, icon hidden");
+    if (m_wifi_state_cb) m_wifi_state_cb(false);
+    ESP_LOGI("ThingsCloud", "WiFi unexpectedly disconnected");
 }
 
 void ThingsCloudApp::stop()
@@ -348,14 +357,14 @@ void ThingsCloudApp::stop()
 
     if (m_wifi_evt)
     {
-        xEventGroupSetBits(m_wifi_evt, WIFI_CANCEL_BIT);
+        xEventGroupSetBits(eg(m_wifi_evt), WIFI_CANCEL_BIT);
     }
 
     esp_wifi_disconnect();
     esp_wifi_stop();
 
     m_wifi_connected = false;
-    ui_set_wifi_state(false);
+    if (m_wifi_state_cb) m_wifi_state_cb(false);
 
     ESP_LOGI("ThingsCloud", "WiFi disconnected, MQTT stopped");
 }
@@ -381,7 +390,7 @@ void ThingsCloudApp::start_mqtt()
         mqtt.init(mqtt_event_cb, this);
     }
 
-    xTaskCreatePinnedToCore(mqtt_task_entry, "mqtt_io", 6*1024, this, 5, &m_mqtt_task, 1);
+    m_mqtt_task = board_task_create("mqtt_io", 6*1024, 5, mqtt_task_entry, this, 1);
     ESP_LOGI("ThingsCloud", "MQTT task started");
 }
 
@@ -391,7 +400,7 @@ void ThingsCloudApp::stop_mqtt()
     {
         auto& mqtt = MqttClient::get_instance();
         mqtt.disconnect();
-        vTaskDelete(m_mqtt_task);
+        vTaskDelete(th(m_mqtt_task));
         m_mqtt_task = nullptr;
         ESP_LOGI("ThingsCloud", "MQTT task stopped");
     }

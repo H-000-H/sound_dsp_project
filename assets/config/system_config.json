@@ -1,0 +1,18 @@
+{
+  "audio": {
+    "default_volume": 0.8,
+    "sample_rate": 44100,
+    "enable_eq": true
+  },
+  "ui": {
+    "theme": "default",
+    "screen_timeout_ms": 30000
+  },
+  "cloud": {
+    "mqtt_auto_start": true,
+    "telemetry_interval_ms": 30000
+  },
+  "system": {
+    "log_level": "info"
+  }
+}

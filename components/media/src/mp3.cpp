@@ -1,4 +1,4 @@
-#include "mp3.hpp"
+#include "media/mp3.hpp"
 
 #include "device.h"
 #include "hal_i2s_bus.h"
@@ -8,11 +8,11 @@
 
 static constexpr const char* kTag = "MP3";
 
-static hal_i2s_bus_t s_i2s = {};  /* Audio output I2S bus */
+static hal_i2s_bus_t s_i2s = {};
 
 void MP3::init()
 {
-    if (s_i2s._impl) return;  /* already initialized */
+    if (s_i2s._impl) return;
 
     device_t* i2s_dev = device_find("i2s_audio0");
     if (!i2s_dev)
@@ -64,14 +64,11 @@ void MP3::play(uint8_t* src_data, uint32_t len)
         size_t written = 0;
 
         uint32_t samples = size / sizeof(int16_t);
-        /* 16-bit PCM → Q31 */
         for (uint32_t i = 0; i < samples; i++)
         {
             q31_buffer[i] = (int32_t)m_buffer[i] << 15;
         }
-        /* Q31 滤波 */
         filter->vptr->process(&filter->config, q31_buffer, q31_buffer, samples);
-        /* Q31 → 16-bit PCM */
         for (uint32_t i = 0; i < samples; i++)
         {
             m_buffer[i] = (int16_t)(q31_buffer[i] >> 15);
