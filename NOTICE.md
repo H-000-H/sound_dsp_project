@@ -388,3 +388,65 @@ app → system → service → capability → board → drivers → hal → ESP-
 3. `write()` 写入前检查 `txfifo_writable()`，满时丢弃数据，标记 `m_connected = false`
 
 **当前状态**：未能彻底解决。写入 USB TX FIFO 时若 host 已断连，仍可能触发硬件挂起。
+
+---
+
+## 19. ⚠️ DRIVER_REGISTER 链接器踩坑：纯 probe 表驱动的符号被吞
+
+> 2026-05-25 · light_sensor 驱动链接失败，修正前分析有误，此为最终正确根因
+
+### 19.1 现象
+
+`DRIVER_REGISTER(light_sensor, ...)` 生成的 `board_driver_probe_light_sensor` 链接时报 `undefined reference`，而前 4 个驱动（st7789/max98357a/gpio_key/ws2812）用同样的 `DRIVER_REGISTER` 却能链过。
+
+### 19.2 真正的根因：显式引用 vs. 仅有 probe 表引用
+
+从 map 文件可以清楚看到前 4 个被拉入的原因：
+
+```
+st7789_driver.c.obj    ← app/libapp.a(lvgl_main.cpp.obj)      调了 st7789_init()
+max98357a_driver.c.obj ← capability/audio_engine.cpp.obj      调了 max98357a_init()
+gpio_key_driver.c.obj  ← capability/input_engine.cpp.obj      调了 gpio_key_init()
+ws2812_driver.c.obj    ← capability/led_engine.cpp.obj        调了 ws2812_init()
+```
+
+前 4 个驱动有 **两套引用**：
+1. 旧的直接函数调用（`st7789_init()` 等）← 这是它们被从 `libdrivers.a` 拉入的原因
+2. probe 表的函数指针 ← 这是架构设计的运行时路径
+
+light_sensor 只有 **一套引用**：probe 表的函数指针。
+
+**GNU ld 归档提取规则**：扫到 `libdrivers.a` 时，只拉入定义了"当前未定义符号"的 `.o`。此时 `board_probe.c.obj` 还没被拉进来（因为 app_main 还没被处理），probe 表里的 5 个函数指针引用都还没产生。所以 light_sensor 只靠 probe 表是**无法被拉入的**。
+
+前 4 个则是运气好——它们被其他代码路径的调用**顺带拉进来了**。
+
+### 19.3 解法：-u 显式标记
+
+```cmake
+target_link_options(${COMPONENT_LIB} INTERFACE
+    "-u" "board_driver_probe_light_sensor"
+)
+```
+
+`-u` 在**所有归档被扫描之前**就把符号标记为 needed，等链接器扫到 `libdrivers.a` 时 light_sensor 就会被正确拉入。
+
+**前 4 个不需要加**，因为它们的旧代码调用路径充当了隐式的 `-u`。但**架构上它们和 light_sensor 是平等的**——如果以后重构去掉旧调用路径（所有驱动只通过 probe 表激活），那么前 4 个也会掉进同样的坑。
+
+### 19.4 新增驱动的两种做法
+
+| 方案 | 做法 | 适用场景 |
+|------|------|---------|
+| **A. 加 `-u`** | `board/CMakeLists.txt` 加一行 `"-u" "board_driver_probe_xxx"` | 纯 probe 表激活，无其他代码调用 |
+| **B. 直接使用** | 在 capability/service 层调一次 `xxx_init(dev)` / `xxx_read()` | 驱动集成到功能里时自然解决 |
+
+两种都是正确做法，方案 A 更适合"只靠 probe 表活的驱动"。
+
+### 19.5 为什么 board_force_link.c 也不行
+
+`board_force_link.c` 所有符号都是 `static`（通过 `objdump -t` 确认全是 `l` 标记）。链接器检查 `.a` 里的 `.o` 时只看**全局符号表**，没有全局符号的 `.o` 会被**跳过**，构造函数永远不会被执行。`.init_array` 的 `KEEP` 只对已提取的目标文件生效，对归档提取阶段无效。
+
+### 19.6 其他尝试的误区
+
+- **`target_link_options(PRIVATE ...)`**：之前认为 PRIVATE 不传播到最终链接，实际 ESP-IDF 里组件静态库的 PRIVATE 链接选项也会出现在最终 elf 的 LINK_FLAGS 中。所以 PRIVATE/INTERFACE 不是根因。
+- **`"-u board_driver_probe_light_sensor"` 合在一个引号里**：CMake 会将整个带空格的字符串作为单个参数传给链接器。链接器无法正确解析 `" -u board_driver_probe_light_sensor"` 为一个参数，导致 `-u` 不生效。必须分两个参数 `"-u" "board_driver_probe_light_sensor"`。
+- 两个错误叠加导致 `-u` 实际没传进链接器，所以链接失败。

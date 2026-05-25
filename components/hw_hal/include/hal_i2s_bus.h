@@ -10,7 +10,8 @@ extern "C" {
 
 typedef struct hal_i2s_bus hal_i2s_bus_t;
 
-typedef struct {
+typedef struct 
+{
     int ws_pin;
     int bclk_pin;
     int dout_pin;
@@ -20,7 +21,8 @@ typedef struct {
     int channel_format;  /* 0 = mono, 1 = stereo */
 } hal_i2s_config_t;
 
-struct hal_i2s_bus {
+struct hal_i2s_bus 
+{
     int (*init)(hal_i2s_bus_t* bus, const hal_i2s_config_t* cfg);
     int (*write)(hal_i2s_bus_t* bus, const int16_t* samples, size_t bytes,
                  size_t* written, uint32_t timeout_ms);

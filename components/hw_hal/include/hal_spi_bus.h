@@ -10,7 +10,8 @@ extern "C" {
 
 typedef struct hal_spi_bus hal_spi_bus_t;
 
-typedef struct {
+typedef struct 
+{
     int mosi;
     int miso;
     int sclk;
@@ -18,14 +19,16 @@ typedef struct {
     int dma_chan;  /* -1 = auto */
 } hal_spi_bus_config_t;
 
-typedef struct {
+typedef struct 
+{
     int mode;            /* 0-3 */
     int clock_speed_hz;
     int cs_pin;          /* -1 = none */
     int queue_size;
 } hal_spi_device_config_t;
 
-struct hal_spi_bus {
+struct hal_spi_bus 
+{
     int (*init)(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg,
                 const hal_spi_device_config_t* dev_cfg);
     int (*write)(hal_spi_bus_t* bus, const uint8_t* data, size_t len);

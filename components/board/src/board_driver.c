@@ -20,7 +20,8 @@ int board_driver_probe_all(void)
     const device_id_t* order = board_probe_order();
     int count = board_probe_order_count();
 
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < count; i++) 
+    {
         device_id_t id = order[i];
         device_t* dev = (device_t*)board_dev_get(id);
         probe_fn_t probe = board_probe_get_fn(id);

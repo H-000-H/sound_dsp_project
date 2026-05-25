@@ -7,25 +7,29 @@
 extern "C" {
 #endif
 
-typedef enum {
+typedef enum 
+{
     HAL_GPIO_MODE_INPUT = 0,
     HAL_GPIO_MODE_OUTPUT,
     HAL_GPIO_MODE_INPUT_OUTPUT,
 } hal_gpio_mode_t;
 
-typedef enum {
+typedef enum 
+{
     HAL_GPIO_PULL_DISABLE = 0,
     HAL_GPIO_PULL_ENABLE,
 } hal_gpio_pull_t;
 
-typedef enum {
+typedef enum 
+{
     HAL_GPIO_INTR_DISABLE = 0,
     HAL_GPIO_INTR_RISING,
     HAL_GPIO_INTR_FALLING,
     HAL_GPIO_INTR_ANY_EDGE,
 } hal_gpio_intr_t;
 
-typedef struct {
+typedef struct 
+{
     int pin;
     hal_gpio_mode_t mode;
     hal_gpio_pull_t pullup;

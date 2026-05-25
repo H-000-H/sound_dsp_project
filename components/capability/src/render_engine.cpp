@@ -7,7 +7,8 @@
 
 static const char* kTag = "render_engine";
 
-typedef struct {
+typedef struct 
+{
     device_t* lcd_dev;
     int width;
     int height;

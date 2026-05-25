@@ -4,15 +4,18 @@ idf_component_register(
         "audio/max98357a_driver.c"
         "input/gpio_key_driver.c"
         "led/ws2812_driver.c"
+        "sensor/light_sensor_driver.c"
     INCLUDE_DIRS
         "display/inc"
         "audio/inc"
         "input/inc"
         "led/inc"
+        "sensor/inc"
     REQUIRES
         board
         hw_hal
         freertos
+        esp_adc
     PRIV_REQUIRES
         esp_timer
 )

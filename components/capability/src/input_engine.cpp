@@ -7,7 +7,8 @@
 
 static const char* kTag = "input_engine";
 
-typedef struct {
+typedef struct 
+{
     device_t* dev;
 } input_engine_impl_t;
 

@@ -9,7 +9,8 @@ extern "C" {
 
 typedef struct hal_rmt_led hal_rmt_led_t;
 
-struct hal_rmt_led {
+struct hal_rmt_led 
+{
     int (*init)(hal_rmt_led_t* led, int gpio_num, uint32_t resolution_hz);
     int (*set_rgb)(hal_rmt_led_t* led, uint8_t r, uint8_t g, uint8_t b);
     int (*set_brightness)(hal_rmt_led_t* led, uint8_t brightness);

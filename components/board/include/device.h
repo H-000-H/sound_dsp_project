@@ -14,7 +14,8 @@ extern "C" {
 #define MAX_DEVICES   DEV_ID_COUNT
 
 /* ── 编译期属性: dtc-lite 在构建期展开, runtime 只读静态表 ── */
-typedef struct {
+typedef struct 
+{
     const char* key;
     const char* value;
 } device_prop_t;
@@ -28,7 +29,8 @@ typedef enum {
 } device_status_t;
 
 /* ── 设备节点 ── */
-typedef struct device_node {
+typedef struct device_node 
+{
     const char*        name;
     const char*        compatible;
     device_status_t    status;

@@ -23,7 +23,8 @@ typedef struct {
     uint32_t      press_ms;
 } input_state_t;
 
-struct input_engine {
+struct input_engine 
+{
     int (*init)(input_engine_t* eng);
     int (*scan)(input_engine_t* eng, input_state_t* out, int max);
     int (*get_key_count)(input_engine_t* eng);

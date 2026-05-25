@@ -6,6 +6,7 @@ idf_component_register(
         "src/hal_pwm.c"
         "src/hal_rmt_led.c"
         "src/hal_uart.c"
+        "src/hal_i2c.c"
     INCLUDE_DIRS "include"
     PRIV_REQUIRES
         esp_driver_gpio
@@ -14,5 +15,6 @@ idf_component_register(
         esp_driver_ledc
         esp_driver_rmt
         esp_driver_uart
+        esp_driver_i2c
         freertos
 )

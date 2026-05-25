@@ -13,6 +13,7 @@ idf_component_register(
         "src/task_utils.c"
         "src/board_device.c"
         "src/board_driver.c"
+        "src/board_force_link.c"
     INCLUDE_DIRS
         "include"
         "${GENERATED_BOARD_DIR}"
@@ -50,3 +51,6 @@ add_dependencies(${COMPONENT_LIB} board_dts_generate)
 
 target_sources(${COMPONENT_LIB} PRIVATE ${GENERATED_BOARD_SRCS})
 set_source_files_properties(${GENERATED_BOARD_SRCS} PROPERTIES GENERATED TRUE)
+target_link_options(${COMPONENT_LIB} INTERFACE
+    "-u" "board_driver_probe_light_sensor"
+)

@@ -21,7 +21,8 @@ static const char* kTag = "st7789";
 #define CMD_NORON      0x13
 
 /* ── 驱动私有数据 ── */
-typedef struct {
+typedef struct 
+{
     hal_spi_bus_t    spi;         /* SPI bus 实例 */
     hal_gpio_config_t   gpio_dc;
     hal_gpio_config_t   gpio_rst;

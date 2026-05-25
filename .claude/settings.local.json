@@ -15,7 +15,10 @@
       "Bash(cmd.exe /c \"C:\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py --help\")",
       "Bash(ls -la /c/Users/18514/.codex/)",
       "Read(//c/Users/18514/.codex//**)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Read(//c/Espressif/dist/**)",
+      "Read(//c/Espressif/**)",
+      "Bash(D:/Espressif_vscode/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32s3-elf-readelf -s -W build/esp-idf/board/CMakeFiles/__idf_board.dir/generated/board_probe.c.obj)"
     ],
     "additionalDirectories": [
       "C:\\Users\\18514\\.codex"
