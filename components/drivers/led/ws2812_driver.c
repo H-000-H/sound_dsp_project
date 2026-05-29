@@ -11,6 +11,14 @@ typedef struct {
     hal_rmt_led_t led;
 } ws2812_priv_t;
 
+/* ── VFS 操作表 ── */
+static int8_t ws2812_init(device_t* dev);
+static int8_t ws2812_ioctl(device_t* dev, int cmd, void* arg);
+static const file_operation_t ws2812_fops = {
+    .init  = ws2812_init,
+    .ioctl = ws2812_ioctl,
+};
+
 static int ws2812_probe(device_t* dev)
 {
     int gpio = -1, led_count = 1, brightness = 128;
@@ -40,6 +48,7 @@ static int ws2812_probe(device_t* dev)
     priv->led.off(&priv->led);
 
     device_set_priv(dev, priv);
+    dev->ops = &ws2812_fops;
     ESP_LOGI(kTag, "probed: GPIO=%d, count=%d, brightness=%d", gpio, led_count, brightness);
     return 0;
 }
@@ -58,28 +67,48 @@ static int ws2812_remove(device_t* dev)
 DRIVER_REGISTER(ws2812, "worldsemi,ws2812", ws2812_probe, ws2812_remove);
 
 /* ── 公开 API ── */
-int ws2812_init(device_t* dev)
+static int8_t ws2812_init(device_t* dev)
 {
     return 0;
 }
 
-int ws2812_set_color(device_t* dev, uint8_t r, uint8_t g, uint8_t b)
+static int ws2812_set_color(device_t* dev, uint8_t r, uint8_t g, uint8_t b)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     return priv->led.set_rgb(&priv->led, r, g, b);
 }
 
-int ws2812_set_brightness(device_t* dev, uint8_t brightness)
+static int ws2812_set_brightness(device_t* dev, uint8_t brightness)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     return priv->led.set_brightness(&priv->led, brightness);
 }
 
-int ws2812_off(device_t* dev)
+static int ws2812_off(device_t* dev)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     return priv->led.off(&priv->led);
+}
+
+/* ── ioctl ── */
+static int8_t ws2812_ioctl(device_t* dev, int cmd, void* arg)
+{
+    switch (cmd) {
+    case WS2812_CMD_SET_COLOR:
+        if (!arg) return -1;
+        {
+            ws2812_color_t* c = (ws2812_color_t*)arg;
+            return ws2812_set_color(dev, c->r, c->g, c->b);
+        }
+    case WS2812_CMD_SET_BRIGHTNESS:
+        if (!arg) return -1;
+        return ws2812_set_brightness(dev, *(uint8_t*)arg);
+    case WS2812_CMD_OFF:
+        return ws2812_off(dev);
+    default:
+        return -1;
+    }
 }

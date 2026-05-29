@@ -2,6 +2,15 @@
 #include "app_base.hpp"
 #include <cstdlib>
 
+/* ── 播放状态机 ── */
+enum class MusicState {
+    kIdle,      /* 无歌曲加载 */
+    kLoading,   /* 文件 I/O / 解码准备中 */
+    kPlaying,   /* 正常播放中 */
+    kPaused,    /* 暂停 */
+    kError,     /* 文件缺失 / 解码失败 */
+};
+
 /* 歌曲信息 */
 struct SongInfo 
 {
@@ -21,7 +30,7 @@ public:
     const lv_image_dsc_t* app_icon() const override;
 
 protected:
-    /* ——— 子类可重载的歌曲数据钩子 ——— */
+    /* ——— 可重载的歌曲数据钩子 ——— */
     virtual int get_song_count() { return 0; }
     virtual const SongInfo* get_song(int idx) { return nullptr; }
     virtual void on_song_select(int idx) {}
@@ -29,6 +38,12 @@ protected:
     virtual void on_next() {}
     virtual void on_prev() {}
     virtual void on_seek(int pct) {}
+
+    /* ——— 状态机 ——— */
+    void set_state(MusicState new_state);
+    MusicState get_state() const { return m_state; }
+    bool is_playing() const { return m_state == MusicState::kPlaying; }
+    static const char* state_str(MusicState s);
 
     /* ——— UI 构建 ——— */
     void build_ui();
@@ -71,7 +86,8 @@ protected:
     int m_volume     = 8;
     int m_audio_mode = 0;
     int m_play_mode  = 0;
-    bool m_playing   = false;
+    MusicState   m_state      = MusicState::kIdle;
+    bool         m_playing    = false;
 
     enum { FOCUS_SONG, FOCUS_PROGRESS, FOCUS_PLAY_MODE, FOCUS_PLAY_CTRL, FOCUS_AUDIO_MODE, FOCUS_COUNT };
 

@@ -15,7 +15,8 @@ typedef struct {
 static int spi_init_impl(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg,
                          const hal_spi_device_config_t* dev_cfg)
 {
-    if (bus == NULL || bus_cfg == NULL || dev_cfg == NULL) {
+    if (bus == NULL || bus_cfg == NULL || dev_cfg == NULL)
+    {
         return -1;
     }
 
@@ -72,7 +73,8 @@ static int spi_write_impl(hal_spi_bus_t* bus, const uint8_t* data, size_t len)
 
     hal_spi_impl_t* impl = (hal_spi_impl_t*)bus->_impl;
 
-    spi_transaction_t trans = {
+    spi_transaction_t trans = 
+    {
         .length = len * 8,
         .tx_buffer = data,
     };

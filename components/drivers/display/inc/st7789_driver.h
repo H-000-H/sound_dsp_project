@@ -14,18 +14,29 @@ typedef struct {
     int height;
 } st7789_info_t;
 
-/* ── API ── */
-int st7789_init(device_t* dev);
-int st7789_get_info(device_t* dev, st7789_info_t* info);
+/* ── ioctl 命令 ── */
+#define ST7789_CMD_GET_INFO      1  /* arg: st7789_info_t* */
+#define ST7789_CMD_FILL_RECT     2  /* arg: st7789_fill_rect_arg_t* */
+#define ST7789_CMD_FILL_SCREEN   3  /* arg: int* — color */
+#define ST7789_CMD_DRAW_BITMAP   4  /* arg: st7789_draw_bitmap_arg_t* */
+#define ST7789_CMD_SET_BACKLIGHT 5  /* arg: int* — brightness */
+#define ST7789_CMD_WRITE_RAM     6  /* arg: st7789_write_ram_arg_t* */
 
-/* 基本绘图 */
-int st7789_fill_rect(device_t* dev, int x, int y, int w, int h, uint16_t color);
-int st7789_draw_bitmap(device_t* dev, int x, int y, int w, int h, const uint8_t* data);
-int st7789_fill_screen(device_t* dev, uint16_t color);
-int st7789_set_backlight(device_t* dev, uint8_t brightness);
+/* ── ioctl 参数结构 ── */
+typedef struct {
+    int x, y, w, h;
+    uint16_t color;
+} st7789_fill_rect_arg_t;
 
-/* 底层寄存器写 (给 LVGL disp_flush 用) */
-int st7789_write_ram(device_t* dev, int x, int y, int w, int h, const uint16_t* pixels);
+typedef struct {
+    int x, y, w, h;
+    const uint8_t* data;
+} st7789_draw_bitmap_arg_t;
+
+typedef struct {
+    int x, y, w, h;
+    const uint16_t* pixels;
+} st7789_write_ram_arg_t;
 
 #ifdef __cplusplus
 }

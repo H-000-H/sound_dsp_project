@@ -23,28 +23,32 @@ int board_driver_probe_all(void)
     for (int i = 0; i < count; i++) 
     {
         device_id_t id = order[i];
-        device_t* dev = (device_t*)board_dev_get(id);
-        probe_fn_t probe = board_probe_get_fn(id);
+        device_t* dev = board_dev_get(id);
+        probe_fn_t probe = board_probe_get_fn(id);// 获取设备对应的probe函数
 
         if (!dev || device_get_status(dev) == DEVICE_STATUS_DISABLED) {
             continue;
         }
-
-        if (!probe) {
+         // 容错处理：设备存在，但没有找到匹配的驱动程序
+        if (!probe) 
+        {
             ESP_LOGW(kTag, "no generated probe for '%s' (compat=%s)",
                      device_get_name(dev), device_get_compatible(dev));
-            device_set_status(dev, DEVICE_STATUS_DISABLED);
+            device_set_status(dev, DEVICE_STATUS_DISABLED);// 标记为残废
             fail++;
             continue;
         }
 
         ESP_LOGI(kTag, "probing '%s' (%s) ...",
                  device_get_name(dev), device_get_compatible(dev));
-        int ret = probe(dev);
-        if (ret == 0) {
+        int ret = probe(dev);// 调用probe函数
+        if (ret == 0) 
+        {
             device_set_status(dev, DEVICE_STATUS_PROBED);
             ok++;
-        } else {
+        } 
+        else 
+        {
             device_set_status(dev, DEVICE_STATUS_ERROR);
             fail++;
             ESP_LOGE(kTag, "probe FAILED: %s (ret=%d)", device_get_name(dev), ret);
@@ -63,11 +67,13 @@ int board_driver_remove_all(void)
     int count = board_probe_order_count();
 
     /* 逆序 = children first, then parents */
+    /* 2:关背光 -> 1:关屏幕 -> 0:关SPI*/
     for (int i = count - 1; i >= 0; i--)
     {
         device_id_t id = order[i];
-        device_t* dev = (device_t*)board_dev_get(id);
+        device_t* dev = board_dev_get(id);
 
+        // 2. 核心拦截：只拆除那些【成功点亮】的设备
         if (!dev || device_get_status(dev) != DEVICE_STATUS_PROBED)
             continue;
 

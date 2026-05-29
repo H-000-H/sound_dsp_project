@@ -34,6 +34,14 @@ static uint32_t current_tick_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+/* ── VFS 操作表 ── */
+static int8_t gpio_key_init(device_t* dev);
+static int8_t gpio_key_ioctl(device_t* dev, int cmd, void* arg);
+static const file_operation_t gpio_key_fops = {
+    .init  = gpio_key_init,
+    .ioctl = gpio_key_ioctl,
+};
+
 static int gpio_key_probe(device_t* dev)
 {
     /* 读取属性: next_pin, prev_pin, enter_pin, esc_pin, debounce_ms */
@@ -83,6 +91,7 @@ static int gpio_key_probe(device_t* dev)
     }
 
     device_set_priv(dev, priv);
+    dev->ops = &gpio_key_fops;
     ESP_LOGI(kTag, "probed: %d keys, debounce=%dms", priv->key_count, debounce);
     return 0;
 }
@@ -100,12 +109,12 @@ static int gpio_key_remove(device_t* dev)
 DRIVER_REGISTER(gpio_key, "gpio-keys", gpio_key_probe, gpio_key_remove);
 
 /* ── 公开 API ── */
-int gpio_key_init(device_t* dev)
+static int8_t gpio_key_init(device_t* dev)
 {
     return 0;
 }
 
-int gpio_key_scan(device_t* dev, gpio_key_state_t* out, int max_keys)
+static int gpio_key_scan(device_t* dev, gpio_key_state_t* out, int max_keys)
 {
     gpio_key_priv_t* priv = (gpio_key_priv_t*)device_get_priv(dev);
     if (!priv || !out || max_keys <= 0) return 0;
@@ -160,8 +169,25 @@ int gpio_key_scan(device_t* dev, gpio_key_state_t* out, int max_keys)
     return count;
 }
 
-int gpio_key_get_count(device_t* dev)
+static int gpio_key_get_count(device_t* dev)
 {
     gpio_key_priv_t* priv = (gpio_key_priv_t*)device_get_priv(dev);
     return priv ? priv->key_count : 0;
+}
+
+/* ── ioctl ── */
+static int8_t gpio_key_ioctl(device_t* dev, int cmd, void* arg)
+{
+    switch (cmd) {
+    case GPIO_KEY_CMD_SCAN:
+        if (!arg) return -1;
+        {
+            gpio_key_scan_arg_t* a = (gpio_key_scan_arg_t*)arg;
+            return gpio_key_scan(dev, a->out, a->max_keys);
+        }
+    case GPIO_KEY_CMD_GET_COUNT:
+        return gpio_key_get_count(dev);
+    default:
+        return -1;
+    }
 }

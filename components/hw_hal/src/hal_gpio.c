@@ -9,7 +9,8 @@ int hal_gpio_init(const hal_gpio_config_t* cfg)
         return ESP_ERR_INVALID_ARG;
     }
 
-    gpio_config_t gpio_cfg = {
+    gpio_config_t gpio_cfg = 
+    {
         .pin_bit_mask = (1ULL << cfg->pin),
         .mode = (cfg->mode == HAL_GPIO_MODE_OUTPUT) ? GPIO_MODE_OUTPUT
                : (cfg->mode == HAL_GPIO_MODE_INPUT_OUTPUT) ? GPIO_MODE_INPUT_OUTPUT

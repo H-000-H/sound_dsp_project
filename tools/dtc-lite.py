@@ -900,6 +900,9 @@ class DTSCompiler:
         }
         errors = []
         for dev in self.device_list:
+            # 跳过根节点 (/) — 它的 compatible 只是板子标识, 不需要驱动
+            if dev.parent is None:
+                continue
             compat_prop = dev.get_prop('compatible')
             if compat_prop and compat_prop.strings:
                 compat = compat_prop.strings[0]
@@ -1089,11 +1092,14 @@ class CGenerator:
             'extern "C" {',
             '#endif',
             '',
-            '/* 设备表访问 (编译期静态表, 非运行时构建) */',
-            'const device_t* board_dev_get(device_id_t id);',
+            '/* 编译期节点访问 (静态 .rodata) */',
+            'const device_node_t* board_node_get(device_id_t id);',
             'int board_dev_count(void);',
             'device_id_t board_dev_find(const char* name);',
             'device_id_t board_dev_find_by_compat(const char* compatible);',
+            '',
+            '/* 运行时设备实例访问 (由 board_device.c 管理) */',
+            'device_t* board_dev_get(device_id_t id);',
             '',
             '/* probe 顺序表 (按依赖拓扑排序) */',
             'const device_id_t* board_probe_order(void);',
@@ -1117,7 +1123,7 @@ class CGenerator:
         print(f"  [gen] {path}")
 
     def _gen_board_devtable_c(self):
-        """生成 board_devtable.c — 静态 device_t 表"""
+        """生成 board_devtable.c — 静态 device_node_t 表"""
         devs = self.compiler.device_list
         path = os.path.join(self.output_dir, 'board_devtable.c')
 
@@ -1165,8 +1171,8 @@ class CGenerator:
                 dep_arrays.append('};')
                 dep_arrays.append('')
 
-        # 设备表
-        device_entries = []
+        # 节点表
+        node_entries = []
         for i, dev in enumerate(devs):
             safe = self._c_safe_name(dev.name)
 
@@ -1193,16 +1199,15 @@ class CGenerator:
             dep_count = sum(1 for dep in self.compiler.get_device_deps(dev)
                           if dep in label_to_idx)
 
-            device_entries.append(
+            node_entries.append(
                 f'    [DEV_ID_{self._snake_name(dev.name)}] = {{\n'
                 f'        .name       = "{dev.name}",\n'
-                f'        .compatible  = "{compat_str}",\n'
+                f'        .compatible = "{compat_str}",\n'
                 f'        .status     = {status_val},\n'
                 f'        .prop_count = {len([p for p in dev.props if p.name not in ("compatible", "depends-on", "depends_on", "status")])},\n'
                 f'        .props      = {prop_ref},\n'
                 f'        .dep_count  = {dep_count},\n'
                 f'        .deps       = (const device_id_t*){dep_ref},\n'
-                f'        .priv_data  = NULL,\n'
                 f'    }},'
             )
 
@@ -1219,16 +1224,16 @@ class CGenerator:
             '/* ===== 依赖表 ===== */',
             '',
         ] + dep_arrays + [
-            '/* ===== 主设备表 (.rodata) ===== */',
-            f'static device_t s_devices[DEV_ID_COUNT] = {{',
-        ] + device_entries + [
+            '/* ===== 主节点表 (只读 .rodata) ===== */',
+            f'static const device_node_t s_nodes[DEV_ID_COUNT] = {{',
+        ] + node_entries + [
             '};',
             '',
             '/* ===== API 实现 ===== */',
             '',
-            'const device_t* board_dev_get(device_id_t id) {',
+            'const device_node_t* board_node_get(device_id_t id) {',
             '    if ((int)id < 0 || (int)id >= DEV_ID_COUNT) return NULL;',
-            '    return &s_devices[id];',
+            '    return &s_nodes[id];',
             '}',
             '',
             'int board_dev_count(void) { return DEV_ID_COUNT; }',
@@ -1236,7 +1241,7 @@ class CGenerator:
             'device_id_t board_dev_find(const char* name) {',
             '    if (!name) return -1;',
             '    for (int i = 0; i < DEV_ID_COUNT; i++) {',
-            '        if (strcmp(s_devices[i].name, name) == 0)',
+            '        if (strcmp(s_nodes[i].name, name) == 0)',
             '            return (device_id_t)i;',
             '    }',
             '    return -1;',
@@ -1245,8 +1250,8 @@ class CGenerator:
             'device_id_t board_dev_find_by_compat(const char* compatible) {',
             '    if (!compatible) return -1;',
             '    for (int i = 0; i < DEV_ID_COUNT; i++) {',
-            '        if (s_devices[i].compatible[0] &&',
-            '            strcmp(s_devices[i].compatible, compatible) == 0)',
+            '        if (s_nodes[i].compatible[0] &&',
+            '            strcmp(s_nodes[i].compatible, compatible) == 0)',
             '            return (device_id_t)i;',
             '    }',
             '    return -1;',

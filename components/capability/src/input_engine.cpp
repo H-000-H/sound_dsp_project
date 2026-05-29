@@ -22,7 +22,7 @@ static int eng_init(input_engine_t* eng)
         ESP_LOGE(kTag, "buttons0 not found");
         return -1;
     }
-    return gpio_key_init(impl->dev);
+    return device_open(impl->dev, NULL);
 }
 
 static int eng_scan(input_engine_t* eng, input_state_t* out, int max)
@@ -30,7 +30,8 @@ static int eng_scan(input_engine_t* eng, input_state_t* out, int max)
     if (!eng || !eng->_impl || !out || max < 1) return -1;
     input_engine_impl_t* impl = (input_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
-    return gpio_key_scan(impl->dev, (gpio_key_state_t*)out, max);
+    gpio_key_scan_arg_t arg = { .out = (gpio_key_state_t*)out, .max_keys = max };
+    return device_ioctl(impl->dev, GPIO_KEY_CMD_SCAN, &arg);
 }
 
 static int eng_get_key_count(input_engine_t* eng)
@@ -38,7 +39,7 @@ static int eng_get_key_count(input_engine_t* eng)
     if (!eng || !eng->_impl) return -1;
     input_engine_impl_t* impl = (input_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
-    return gpio_key_get_count(impl->dev);
+    return device_ioctl(impl->dev, GPIO_KEY_CMD_GET_COUNT, NULL);
 }
 
 static void eng_deinit(input_engine_t* eng)

@@ -15,7 +15,8 @@ extern "C" {
  */
 typedef struct audio_engine audio_engine_t;
 
-struct audio_engine {
+struct audio_engine 
+{
     int (*init)(audio_engine_t* eng);
     int (*play)(audio_engine_t* eng, const uint8_t* data, uint32_t len);
     int (*set_volume)(audio_engine_t* eng, float vol);

@@ -25,10 +25,14 @@ typedef struct {
     uint32_t      press_ms;  /* 按下持续时间 */
 } gpio_key_state_t;
 
-/* ── API ── */
-int gpio_key_init(device_t* dev);
-int gpio_key_scan(device_t* dev, gpio_key_state_t* out, int max_keys);
-int gpio_key_get_count(device_t* dev);
+/* ── ioctl 命令 ── */
+#define GPIO_KEY_CMD_SCAN      1  /* arg: gpio_key_scan_arg_t* */
+#define GPIO_KEY_CMD_GET_COUNT 2  /* arg: int* */
+
+typedef struct {
+    gpio_key_state_t* out;
+    int               max_keys;
+} gpio_key_scan_arg_t;
 
 #ifdef __cplusplus
 }

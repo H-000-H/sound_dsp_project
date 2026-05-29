@@ -35,6 +35,13 @@ static int s_gpio_esc   = -1;
 #define GPIO_ENTER s_gpio_enter
 #define GPIO_ESC   s_gpio_esc
 
+/* ── 菜单状态机 ── */
+enum class MenuState : uint8_t {
+    kIdle,       /* 显示中，可交互 */
+    kAnimating,  /* 卡片动画中 */
+    kAppActive,  /* 子 App 运行中 */
+};
+
 /*====================================================================*/
 /*  应用条目                                                          */
 /*====================================================================*/
@@ -78,7 +85,7 @@ static lv_obj_t*   s_time_label  = nullptr;
 static lv_obj_t*   s_cards[3]    = {nullptr};
 static lv_obj_t*   s_dots[3]     = {nullptr};
 static int         s_page        = 0;
-static bool        s_animating   = false;
+static MenuState   s_state       = MenuState::kIdle;
 static lv_timer_t* s_nav_timer   = nullptr;
 
 static void animate_to(int new_page);
@@ -145,9 +152,9 @@ static void update_dots()
 static void animate_to(int new_page)
 {
     if (new_page < 0 || new_page >= APP_COUNT) return;
-    if (new_page == s_page || s_animating) return;
+    if (new_page == s_page || s_state != MenuState::kIdle) return;
     if (!s_card_row || !lv_obj_is_valid(s_card_row)) return;
-    s_animating = true;
+    s_state = MenuState::kAnimating;
 
     int cur_x = lv_obj_get_x(s_card_row);
     bool wrap = (new_page == 0 && s_page == APP_COUNT - 1) || (new_page == APP_COUNT - 1 && s_page == 0);
@@ -173,7 +180,7 @@ static void animate_to(int new_page)
     lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
     lv_anim_set_completed_cb(&a, [](lv_anim_t*)
     {
-        s_animating = false;
+        s_state = MenuState::kIdle;
         for (int i = 0; i < APP_COUNT; i++)
         {
             if (s_cards[i])
@@ -193,7 +200,7 @@ static void nav_timer_cb(lv_timer_t* t)
 {
     (void)t;
     static bool s_prev_held = false;
-    if (lv_screen_active() != s_screen)
+    if (lv_screen_active() != s_screen || s_state == MenuState::kAppActive)
     {
         s_prev_held = false; return;
     }
@@ -217,6 +224,7 @@ static void nav_timer_cb(lv_timer_t* t)
 static void key_cb(lv_event_t* e)
 {
     if (lv_event_get_code(e) != LV_EVENT_KEY) return;
+    if (s_state == MenuState::kAppActive) return;
     uint32_t key = lv_event_get_key(e);
 
     if (key == LV_KEY_NEXT)
@@ -229,6 +237,7 @@ static void key_cb(lv_event_t* e)
     }
     else if (key == LV_KEY_ENTER)
     {
+        s_state = MenuState::kAppActive;
         lv_async_call([](void* arg)
         {
             auto* app = static_cast<AppBase*>(arg);
@@ -361,7 +370,7 @@ void card_menu_show(void)
     if (s_screen)
     {
         lv_screen_load(s_screen);
-        s_animating = false;
+        s_state = MenuState::kIdle;
         {
             int restore_x;
             if (s_page == 0)
@@ -388,7 +397,7 @@ void card_menu_show(void)
     key_map_init();
 
     s_page = 0;
-    s_animating = false;
+    s_state = MenuState::kIdle;
 
     s_screen = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(s_screen, lv_color_hex(th_bg()), 0);

@@ -1,11 +1,12 @@
 #ifndef __Light_Sensor__H
 #define __Light_Sensor__H
-#include "device.h"
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-int light_sensor_read(device_t* dev,int* value);
+/* ── ioctl 命令 ── */
+#define LIGHT_SENSOR_CMD_READ 1  /* arg: int* — 输出光照值 0~100 */
+
 #ifdef __cplusplus
 }
 #endif

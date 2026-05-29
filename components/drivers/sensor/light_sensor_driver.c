@@ -1,6 +1,6 @@
 #include "light_sensor_driver.h"
 #include "device.h"
-#include "driver.h" 
+#include "driver.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "stdlib.h"
@@ -12,6 +12,13 @@ typedef struct
     int adc_chanel;
     int interval_ms;
 }light_sensor_priv_t;
+
+/* ── VFS 操作表（无 init, probe 自带初始化） ── */
+static int8_t light_sensor_ioctl(device_t* dev, int cmd, void* arg);
+static const file_operation_t light_sensor_fops = {
+    .init  = NULL,
+    .ioctl = light_sensor_ioctl,
+};
 
 static int light_probe(device_t* dev)
 {
@@ -25,12 +32,12 @@ static int light_probe(device_t* dev)
 
     //初始化ADC
     adc_oneshot_unit_handle_t adc_handle;
-    adc_oneshot_unit_init_cfg_t unit_cfg = 
+    adc_oneshot_unit_init_cfg_t unit_cfg =
     {
         .unit_id = ADC_UNIT_1,
     };
     adc_oneshot_new_unit(&unit_cfg,&adc_handle);
-    
+
     adc_oneshot_chan_cfg_t  chan_cfg=
     {
         .atten = ADC_ATTEN_DB_12,
@@ -45,6 +52,7 @@ static int light_probe(device_t* dev)
     priv->interval_ms= interval;
 
     device_set_priv(dev,priv);
+    dev->ops = &light_sensor_fops;
     ESP_LOGI(TAG, "probed: GPIO%d, chan=%d, atten=%d", adc_pin, adc_channel, adc_atten);
     return 0 ;
 }
@@ -65,7 +73,7 @@ static int light_remove(device_t*dev)
 
 DRIVER_REGISTER(light_sensor, "gl5528,photoresistor", light_probe, light_remove);
 
-int light_sensor_read(device_t*dev,int *value)
+static int light_sensor_read(device_t*dev,int *value)
 {
     light_sensor_priv_t* priv = device_get_priv(dev);
     if(!priv||!value) return -1;
@@ -75,4 +83,16 @@ int light_sensor_read(device_t*dev,int *value)
     //把0~4095映射到0~100
     *value = (raw*100)/4095;
     return 0;
+}
+
+/* ── ioctl ── */
+static int8_t light_sensor_ioctl(device_t* dev, int cmd, void* arg)
+{
+    switch (cmd) {
+    case LIGHT_SENSOR_CMD_READ:
+        if (!arg) return -1;
+        return light_sensor_read(dev, (int*)arg);
+    default:
+        return -1;
+    }
 }

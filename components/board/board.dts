@@ -1,7 +1,16 @@
 /dts-v1/;
 
 / {
+    compatible = "sound-dsp,board-v1";
+    #address-cells = <1>;
+    #size-cells = <0>;
     model = "sound_dsp_board_v1";
+
+    cpus {
+        cpu@0 {
+            compatible = "esp32,cpu";
+        };
+    };
 
     aliases {
         display0 = &lcd0;
@@ -19,6 +28,7 @@
 
     soc {
         spi2: spi@2 {
+            reg = <2>;
             compatible = "esp32,spi-bus";
             mosi = <5>;
             miso = <-1>;
@@ -27,6 +37,7 @@
         };
 
         i2s_audio0: i2s@0 {
+            reg = <0>;
             compatible = "esp32,i2s-bus";
             ws = <13>;
             bclk = <12>;
@@ -37,6 +48,7 @@
         };
 
         uart_debug: uart@0 {
+            reg = <0>;
             compatible = "esp32,uart";
             tx_pin = <43>;
             rx_pin = <44>;
@@ -49,6 +61,7 @@
 
     display {
         lcd0: display@0 {
+            reg = <0>;
             compatible = "sitronix,st7789";
             depends_on = <&spi2>;
             dc = <6>;
@@ -63,6 +76,7 @@
 
     audio {
         speaker_amp0: amplifier@0 {
+            reg = <0>;
             compatible = "maxim,max98357a";
             depends_on = <&i2s_audio0>;
             sdn_pin = <10>;
@@ -72,6 +86,7 @@
 
     input {
         buttons0: gpio-keys@0 {
+            reg = <0>;
             compatible = "gpio-keys";
             next_pin = <16>;
             prev_pin = <17>;
@@ -83,6 +98,7 @@
 
     leds {
         rgb_led0: led@0 {
+            reg = <0>;
             compatible = "worldsemi,ws2812";
             gpio = <48>;
             led_count = <1>;
@@ -93,6 +109,7 @@
 
     sensors {
         lights_sensor0: light@0 {
+            reg = <0>;
             compatible = "gl5528,photoresistor";
             adc_pin = <1>;
             adc_channel = <0>;

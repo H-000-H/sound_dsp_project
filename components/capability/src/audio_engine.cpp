@@ -8,7 +8,8 @@
 
 static const char* kTag = "audio_engine";
 
-typedef struct {
+typedef struct 
+{
     device_t* amp_dev;
 } audio_engine_impl_t;
 
@@ -23,7 +24,7 @@ static int eng_init(audio_engine_t* eng)
         ESP_LOGE(kTag, "speaker_amp0 not found");
         return -1;
     }
-    if (max98357a_init(impl->amp_dev) != 0)
+    if (device_open(impl->amp_dev, NULL) != 0)
     {
         ESP_LOGE(kTag, "amp init failed");
         return -1;
@@ -52,14 +53,14 @@ static int eng_set_enable(audio_engine_t* eng, int enable)
 {
     if (!eng || !eng->_impl) return -1;
     audio_engine_impl_t* impl = (audio_engine_impl_t*)eng->_impl;
-    return max98357a_set_enable(impl->amp_dev, enable);
+    return device_ioctl(impl->amp_dev, MAX98357A_CMD_SET_ENABLE, &enable);
 }
 
 static void eng_deinit(audio_engine_t* eng)
 {
     if (!eng || !eng->_impl) return;
     audio_engine_impl_t* impl = (audio_engine_impl_t*)eng->_impl;
-    if (impl->amp_dev) max98357a_set_enable(impl->amp_dev, 0);
+    if (impl->amp_dev) { int v = 0; device_ioctl(impl->amp_dev, MAX98357A_CMD_SET_ENABLE, &v); }
     free(impl);
     eng->_impl = NULL;
 }

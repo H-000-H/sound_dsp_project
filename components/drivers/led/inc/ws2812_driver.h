@@ -8,10 +8,14 @@
 extern "C" {
 #endif
 
-int ws2812_init(device_t* dev);
-int ws2812_set_color(device_t* dev, uint8_t r, uint8_t g, uint8_t b);
-int ws2812_set_brightness(device_t* dev, uint8_t brightness);
-int ws2812_off(device_t* dev);
+/* ── ioctl 命令 ── */
+#define WS2812_CMD_SET_COLOR      1  /* arg: ws2812_color_t* */
+#define WS2812_CMD_SET_BRIGHTNESS 2  /* arg: uint8_t* */
+#define WS2812_CMD_OFF            3  /* arg: NULL */
+
+typedef struct {
+    uint8_t r, g, b;
+} ws2812_color_t;
 
 #ifdef __cplusplus
 }

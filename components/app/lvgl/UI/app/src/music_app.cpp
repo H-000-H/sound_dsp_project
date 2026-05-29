@@ -3,6 +3,9 @@
 #include "key_input.hpp"
 #include "ui/app/music/song_list.hpp"
 #include "theme.hpp"
+#include "esp_log.h"
+
+static const char* kTag = "music_app";
 
 extern "C"
 {
@@ -15,6 +18,56 @@ extern "C"
 /*  歌曲播放状态 — 由 impl 提供数据                                   */
 /*====================================================================*/
 static const char* s_mode_names[] = {"原声", "标准", "加强", "自定义"};
+
+/*====================================================================*/
+/*  状态机                                                             */
+/*====================================================================*/
+const char* MusicApp::state_str(MusicState s)
+{
+    switch (s) {
+        case MusicState::kIdle:    return "Idle";
+        case MusicState::kLoading: return "Loading";
+        case MusicState::kPlaying: return "Playing";
+        case MusicState::kPaused:  return "Paused";
+        case MusicState::kError:   return "Error";
+    }
+    return "?";
+}
+
+void MusicApp::set_state(MusicState new_state)
+{
+    if (m_state == new_state) return;
+
+    auto prev = m_state;
+    switch (new_state) {
+    case MusicState::kLoading:
+        if (prev != MusicState::kIdle &&
+            prev != MusicState::kPlaying &&
+            prev != MusicState::kPaused &&
+            prev != MusicState::kError) {
+            ESP_LOGW(kTag, "illegal transition %s → %s", state_str(prev), state_str(new_state));
+            return;
+        }
+        break;
+    case MusicState::kPlaying:
+        if (prev != MusicState::kLoading && prev != MusicState::kPaused) {
+            ESP_LOGW(kTag, "illegal transition %s → %s", state_str(prev), state_str(new_state));
+            return;
+        }
+        break;
+    case MusicState::kPaused:
+        if (prev != MusicState::kPlaying) {
+            ESP_LOGW(kTag, "illegal transition %s → %s", state_str(prev), state_str(new_state));
+            return;
+        }
+        break;
+    default: break;
+    }
+
+    ESP_LOGI(kTag, "state: %s → %s", state_str(prev), state_str(new_state));
+    m_state = new_state;
+    m_playing = (new_state == MusicState::kPlaying);
+}
 
 /* 按键 GPIO 从 DeviceTree 读取 */
 #define GPIO_NEXT  KeyInput::getGpioNext()
@@ -422,6 +475,9 @@ void MusicApp::handle_key(uint32_t key)
 
     if (key == LV_KEY_ESC)
     {
+        if (m_state == MusicState::kError) {
+            set_state(MusicState::kIdle);
+        }
         if (m_adjust)
         {
             m_adjust = false; focus_update();
@@ -433,21 +489,32 @@ void MusicApp::handle_key(uint32_t key)
         return;
     }
 
+    /* 状态机守卫: Loading/Error 时只允许 ESC */
+    if (m_state == MusicState::kLoading || m_state == MusicState::kError)
+        return;
+
     if (m_adjust)
     {
         if (m_focus == FOCUS_PLAY_CTRL)
         {
-            if (key == LV_KEY_ENTER) 
-            { 
-                m_playing = !m_playing; on_play_pause(); update_display(); 
+            if (key == LV_KEY_ENTER)
+            {
+                if (m_state == MusicState::kPlaying) {
+                    set_state(MusicState::kPaused); on_play_pause();
+                } else {
+                    set_state(MusicState::kPlaying); on_play_pause();
+                }
+                update_display();
             }
-            else if (key == LV_KEY_NEXT) 
-            { 
-                on_next(); update_display(); 
+            else if (key == LV_KEY_NEXT)
+            {
+                set_state(MusicState::kLoading); on_next(); update_display();
+                if (get_state() == MusicState::kLoading) set_state(MusicState::kPlaying);
             }
-            else if (key == LV_KEY_PREV) 
-            { 
-                on_prev(); update_display(); 
+            else if (key == LV_KEY_PREV)
+            {
+                set_state(MusicState::kLoading); on_prev(); update_display();
+                if (get_state() == MusicState::kLoading) set_state(MusicState::kPlaying);
             }
             return;
         }
@@ -562,7 +629,7 @@ void MusicApp::progress_timer_cb(lv_timer_t* t)
         if (app->m_vol_bar) lv_bar_set_value(app->m_vol_bar, new_vol, LV_ANIM_OFF);
     }
 
-    if (!app->m_playing) return;
+    if (app->m_state != MusicState::kPlaying) return;
 
     app->m_elapsed++;
     auto* song = app->get_song(app->m_cur_song);
@@ -576,28 +643,27 @@ void MusicApp::progress_timer_cb(lv_timer_t* t)
             app->m_progress = 0;
             app->update_display();
             return;
-        } 
+        }
         else if (app->m_play_mode == 2)
         {
             int nxt;
             int cnt = app->get_song_count();
-            if (cnt <= 1)
-            {
-                nxt = 0;
-            }
-            else
-            {
-                do { nxt = rand() % cnt; } while (nxt == app->m_cur_song);
-            }
+            if (cnt <= 1) { nxt = 0; }
+            else { do { nxt = rand() % cnt; } while (nxt == app->m_cur_song); }
             app->m_cur_song = nxt;
+            app->set_state(MusicState::kLoading);
             app->on_song_select(nxt);
-        } 
-        else 
+        }
+        else
         {
             int cnt = app->get_song_count();
             if (cnt > 0) app->m_cur_song = (app->m_cur_song + 1) % cnt;
+            app->set_state(MusicState::kLoading);
             app->on_song_select(app->m_cur_song);
         }
+        /* 同步 impl: 若 impl 没改状态，自动切回 Playing */
+        if (app->get_state() == MusicState::kLoading)
+            app->set_state(MusicState::kPlaying);
     }
     int dur = song->duration_sec;
     if (dur <= 0) dur = 1;
@@ -630,6 +696,8 @@ void MusicApp::show()
         m_prog_timer = lv_timer_create(progress_timer_cb, 1000, this);
 
     m_nav_held = false;
+    m_state = MusicState::kIdle;
+    m_playing = false;
     focus_update();
     update_display();
 }

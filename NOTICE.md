@@ -450,3 +450,48 @@ target_link_options(${COMPONENT_LIB} INTERFACE
 - **`target_link_options(PRIVATE ...)`**：之前认为 PRIVATE 不传播到最终链接，实际 ESP-IDF 里组件静态库的 PRIVATE 链接选项也会出现在最终 elf 的 LINK_FLAGS 中。所以 PRIVATE/INTERFACE 不是根因。
 - **`"-u board_driver_probe_light_sensor"` 合在一个引号里**：CMake 会将整个带空格的字符串作为单个参数传给链接器。链接器无法正确解析 `" -u board_driver_probe_light_sensor"` 为一个参数，导致 `-u` 不生效。必须分两个参数 `"-u" "board_driver_probe_light_sensor"`。
 - 两个错误叠加导致 `-u` 实际没传进链接器，所以链接失败。
+
+---
+
+## 20. App 层状态机引入
+
+### 20.1 动机
+
+音乐播放器涉及歌曲切换、暂停/播放、进度跟踪等异步动作，之前依赖 `m_playing` 布尔值 + `m_adjust` 标志位做状态判断，容易导致以下问题：
+
+- 歌曲切换中（文件 I/O）再次收到按键，状态错乱
+- Loading 未完成就响应播放/暂停指令
+- 无明确的错误恢复路径
+
+### 20.2 改了什么
+
+**MusicApp** (`components/app/lvgl/UI/app/`)
+
+新增 `MusicState` 枚举，5 个状态：
+
+| 状态 | 含义 | 进入条件 |
+|---|---|---|
+| `kIdle` | 初始/停止，无歌曲加载 | show() / ESC 退出 |
+| `kLoading` | 文件 I/O 或解码准备中 | on_song_select / on_next / on_prev |
+| `kPlaying` | 正常播放 | Loading 完成 / Paused → 恢复 |
+| `kPaused` | 暂停 | Playing → 暂停 |
+| `kError` | 文件缺失或解码失败 | (预留) |
+
+`set_state()` 包含非法转移检测（`ESP_LOGW` + 拒绝），`handle_key()` 在 `kLoading`/`kError` 时只放行 ESC，其余按键被守卫；`progress_timer_cb` 仅在 `kPlaying` 时推进进度。
+
+**CardMenu** (`components/app/lvgl/UI/nav/`)
+
+新增 `MenuState` 枚举，替换原来的 `s_animating` bool：
+
+| 状态 | 含义 |
+|---|---|
+| `kIdle` | 菜单正常显示，可交互 |
+| `kAnimating` | 卡片滑动动画中 |
+| `kAppActive` | 子 App 运行中（屏蔽 GPIO 轮询） |
+
+### 20.3 设计原则
+
+- 不改变现有行为：状态机只做守卫（guard），不做行为变更
+- 同步兼容：MusicImpl 若不同步调用 `set_state()`，状态机在钩子返回后自动 fallback 到 `kPlaying`
+- 日志可见：所有状态转移都打 `ESP_LOGI`，非法转移打 `ESP_LOGW`
+- 序列化和 settings_app 的 UI 层未引入状态机，因其操作是纯同步的，状态机无实际收益

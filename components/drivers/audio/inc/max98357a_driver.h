@@ -1,15 +1,12 @@
 #ifndef MAX98357A_DRIVER_H
 #define MAX98357A_DRIVER_H
 
-#include <stdint.h>
-#include "device.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int max98357a_init(device_t* dev);
-int max98357a_set_enable(device_t* dev, int enable);
+/* ── ioctl 命令 ── */
+#define MAX98357A_CMD_SET_ENABLE  1  /* arg: int* — 0=关闭, 1=开启 */
 
 #ifdef __cplusplus
 }

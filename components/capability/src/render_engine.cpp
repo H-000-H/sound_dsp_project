@@ -25,18 +25,19 @@ static int eng_init(render_engine_t* eng)
         ESP_LOGE(kTag, "lcd0 not found");
         return -1;
     }
-    if (st7789_init(impl->lcd_dev) != 0)
+    if (device_open(impl->lcd_dev, NULL) != 0)
     {
         ESP_LOGE(kTag, "st7789 init failed");
         return -1;
     }
 
     st7789_info_t info;
-    st7789_get_info(impl->lcd_dev, &info);
+    device_ioctl(impl->lcd_dev, ST7789_CMD_GET_INFO, &info);
     impl->width = info.width;
     impl->height = info.height;
 
-    st7789_fill_screen(impl->lcd_dev, 0x0000);
+    uint16_t black = 0x0000;
+    device_ioctl(impl->lcd_dev, ST7789_CMD_FILL_SCREEN, &black);
     ESP_LOGI(kTag, "render engine ready: %dx%d", impl->width, impl->height);
     return 0;
 }
@@ -45,21 +46,22 @@ static int eng_flush(render_engine_t* eng, int x, int y, int w, int h, const uin
 {
     if (!eng || !eng->_impl || !pixels) return -1;
     render_engine_impl_t* impl = (render_engine_impl_t*)eng->_impl;
-    return st7789_write_ram(impl->lcd_dev, x, y, w, h, pixels);
+    st7789_write_ram_arg_t arg = { .x = x, .y = y, .w = w, .h = h, .pixels = pixels };
+    return device_ioctl(impl->lcd_dev, ST7789_CMD_WRITE_RAM, &arg);
 }
 
 static int eng_fill_screen(render_engine_t* eng, uint16_t color)
 {
     if (!eng || !eng->_impl) return -1;
     render_engine_impl_t* impl = (render_engine_impl_t*)eng->_impl;
-    return st7789_fill_screen(impl->lcd_dev, color);
+    return device_ioctl(impl->lcd_dev, ST7789_CMD_FILL_SCREEN, &color);
 }
 
 static int eng_set_backlight(render_engine_t* eng, uint8_t brightness)
 {
     if (!eng || !eng->_impl) return -1;
     render_engine_impl_t* impl = (render_engine_impl_t*)eng->_impl;
-    return st7789_set_backlight(impl->lcd_dev, brightness);
+    return device_ioctl(impl->lcd_dev, ST7789_CMD_SET_BACKLIGHT, &brightness);
 }
 
 static int eng_get_display_size(render_engine_t* eng, int* width, int* height)
@@ -75,7 +77,8 @@ static void eng_deinit(render_engine_t* eng)
 {
     if (!eng || !eng->_impl) return;
     render_engine_impl_t* impl = (render_engine_impl_t*)eng->_impl;
-    st7789_fill_screen(impl->lcd_dev, 0x0000);
+    uint16_t black = 0x0000;
+    device_ioctl(impl->lcd_dev, ST7789_CMD_FILL_SCREEN, &black);
     free(impl);
     eng->_impl = NULL;
 }
