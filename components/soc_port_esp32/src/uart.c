@@ -1,8 +1,9 @@
 #include "hal_uart.h"
 
 #include "driver/uart.h"
-#include "esp_log.h"
-#include <stdlib.h>
+#include "osal.h"
+#include "VFS.h"
+#include <string.h>
 
 static const char* kTag = "hal_uart";
 
@@ -10,19 +11,32 @@ typedef struct {
     uart_port_t port;
 } hal_uart_impl_t;
 
+/* ── BSS 静态池（禁止运行时动态分配） ── */
+#define UART_IMPL_POOL_SIZE 3
+static hal_uart_impl_t s_uart_pool[UART_IMPL_POOL_SIZE];
+static uint8_t s_uart_used[UART_IMPL_POOL_SIZE];
+
 static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
 {
     if (uart == NULL || cfg == NULL) {
         return -1;
     }
 
-    hal_uart_impl_t* impl = (hal_uart_impl_t*)calloc(1, sizeof(hal_uart_impl_t));
-    if (impl == NULL) {
-        ESP_LOGE(kTag, "malloc failed");
-        return -1;
+    hal_uart_impl_t* impl = NULL;
+    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) {
+        if (!s_uart_used[i]) {
+            s_uart_used[i] = 1;
+            impl = &s_uart_pool[i];
+            memset(impl, 0, sizeof(*impl));
+            break;
+        }
+    }
+    if (!impl) {
+        DRV_LOGE(kTag, "impl pool exhausted");
+        return VFS_ERR_NOMEM;
     }
 
-    /* Use UART_NUM_1 for auxiliary serial (UART_NUM_0 is usually console) */
+    int ret = 0;
     impl->port = UART_NUM_1;
 
     uart_config_t uart_cfg = {
@@ -39,30 +53,36 @@ static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
         .source_clk = UART_SCLK_DEFAULT,
     };
 
-    esp_err_t ret = uart_param_config(impl->port, &uart_cfg);
-    if (ret != ESP_OK) {
-        ESP_LOGE(kTag, "uart_param_config failed: %d", ret);
-        free(impl);
-        return ret;
+    esp_err_t esp_ret = uart_param_config(impl->port, &uart_cfg);
+    if (esp_ret != ESP_OK) {
+        DRV_LOGE(kTag, "uart_param_config failed: %d", esp_ret);
+        ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+        goto err_pool;
     }
 
-    ret = uart_set_pin(impl->port, cfg->tx_pin, cfg->rx_pin,
+    esp_ret = uart_set_pin(impl->port, cfg->tx_pin, cfg->rx_pin,
                         cfg->rts_pin, cfg->cts_pin);
-    if (ret != ESP_OK) {
-        ESP_LOGE(kTag, "uart_set_pin failed: %d", ret);
-        free(impl);
-        return ret;
+    if (esp_ret != ESP_OK) {
+        DRV_LOGE(kTag, "uart_set_pin failed: %d", esp_ret);
+        ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+        goto err_pool;
     }
 
-    ret = uart_driver_install(impl->port, 1024, 0, 0, NULL, 0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(kTag, "uart_driver_install failed: %d", ret);
-        free(impl);
-        return ret;
+    esp_ret = uart_driver_install(impl->port, 1024, 0, 0, NULL, 0);
+    if (esp_ret != ESP_OK) {
+        DRV_LOGE(kTag, "uart_driver_install failed: %d", esp_ret);
+        ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+        goto err_pool;
     }
 
     uart->_impl = impl;
     return 0;
+
+err_pool:
+    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) {
+        if (&s_uart_pool[i] == impl) { s_uart_used[i] = 0; break; }
+    }
+    return ret;
 }
 
 static int uart_write_impl(hal_uart_t* uart, const uint8_t* data, size_t len)
@@ -83,7 +103,7 @@ static int uart_read_impl(hal_uart_t* uart, uint8_t* data, size_t len, uint32_t 
     }
 
     hal_uart_impl_t* impl = (hal_uart_impl_t*)uart->_impl;
-    int ret = uart_read_bytes(impl->port, data, len, pdMS_TO_TICKS(timeout_ms));
+    int ret = uart_read_bytes(impl->port, data, len, osal_ticks_from_ms(timeout_ms));
     return (ret >= 0) ? ret : ret;
 }
 
@@ -95,7 +115,7 @@ static int uart_deinit_impl(hal_uart_t* uart)
 
     hal_uart_impl_t* impl = (hal_uart_impl_t*)uart->_impl;
     uart_driver_delete(impl->port);
-    free(impl);
+    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) { if (&s_uart_pool[i] == impl) { s_uart_used[i] = 0; break; } }
     uart->_impl = NULL;
     return 0;
 }
@@ -110,7 +130,6 @@ void hal_uart_init_struct(hal_uart_t* uart)
     uart->_impl = NULL;
 }
 
-/* ===== UART 平台驱动层 ===== */
 #include "driver.h"
 
 typedef struct {
@@ -118,33 +137,41 @@ typedef struct {
     hal_uart_config_t cfg;
 } uart_priv_t;
 
-static int8_t uart_fops_write(device_t* dev, const void* buffer, size_t len)
+#define UART_PRIV_POOL_SIZE 2
+static uart_priv_t s_uart_priv_pool[UART_PRIV_POOL_SIZE];
+static uint8_t s_uart_priv_used[UART_PRIV_POOL_SIZE];
+
+static int uart_fops_write(device_t* dev, const void* buffer, size_t len)
 {
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     return priv->uart.write(&priv->uart, (const uint8_t*)buffer, len);
 }
 
-static int8_t uart_fops_ioctl(device_t* dev, int cmd, void* arg)
+static int uart_fops_ioctl(device_t* dev, int cmd, void* arg)
 {
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
     case UART_CMD_READ: {
+        if (!arg) return -1;
         uart_read_arg_t* a = (uart_read_arg_t*)arg;
         return priv->uart.read(&priv->uart, a->data, a->len, a->timeout_ms);
     }
     case UART_CMD_DEINIT: {
         int ret = priv->uart.deinit(&priv->uart);
-        free(priv);
+        for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) { if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; } }
         device_set_priv(dev, NULL);
+        device_set_status(dev, DEVICE_STATUS_SUSPENDED);
         return ret;
     }
     case UART_CMD_SET_BAUD: {
         if (!arg) return -1;
         priv->uart.deinit(&priv->uart);
         priv->cfg.baud_rate = *(int*)arg;
-        return priv->uart.init(&priv->uart, &priv->cfg);
+        int ret = priv->uart.init(&priv->uart, &priv->cfg);
+        /* 重新 init 如果失败不释放池槽位 — priv 仍有效 */
+        return ret;
     }
     default:
         return -1;
@@ -166,8 +193,16 @@ static int uart_probe(device_t* dev)
     device_get_prop_int(dev, "stop_bits", &stop_bits);
     device_get_prop_int(dev, "parity", &parity);
 
-    uart_priv_t* priv = (uart_priv_t*)calloc(1, sizeof(uart_priv_t));
-    if (!priv) return -1;
+    uart_priv_t* priv = NULL;
+    for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) {
+        if (!s_uart_priv_used[i]) {
+            s_uart_priv_used[i] = 1;
+            priv = &s_uart_priv_pool[i];
+            memset(priv, 0, sizeof(*priv));
+            break;
+        }
+    }
+    if (!priv) return VFS_ERR_NOMEM;
 
     priv->cfg.tx_pin = tx; priv->cfg.rx_pin = rx;
     priv->cfg.rts_pin = -1; priv->cfg.cts_pin = -1;
@@ -178,12 +213,20 @@ static int uart_probe(device_t* dev)
 
     hal_uart_init_struct(&priv->uart);
     int ret = priv->uart.init(&priv->uart, &priv->cfg);
-    if (ret != 0) { free(priv); return ret; }
+    if (ret != 0) {
+        goto err_pool;
+    }
 
     device_set_priv(dev, priv);
     dev->ops = &uart_fops;
-    ESP_LOGI(kTag, "UART probed: TX=%d RX=%d baud=%d", tx, rx, baud);
+    DRV_LOGI(kTag, "UART probed: TX=%d RX=%d baud=%d", tx, rx, baud);
     return 0;
+
+err_pool:
+    for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) {
+        if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; }
+    }
+    return ret;
 }
 
 static int uart_remove(device_t* dev)
@@ -191,7 +234,7 @@ static int uart_remove(device_t* dev)
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->uart.deinit(&priv->uart);
-        free(priv);
+        for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) { if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

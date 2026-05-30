@@ -30,12 +30,14 @@
         spi2: spi@2 {
             reg = <2>;
             compatible = "esp32,spi-bus";
+            host = <2>;
             mosi = <5>;
             miso = <-1>;
             sclk = <4>;
             dma_chan = <-1>;
             clock_speed_hz = <80000000>;
             cs_pin = <-1>;
+            max_transfer_sz = <4096>;
         };
 
         i2s_audio0: i2s@0 {
@@ -76,6 +78,12 @@
             reg = <0>;
             compatible = "esp32,rmt-tx";
         };
+
+        adc0: adc@1 {
+            reg = <1>;
+            compatible = "esp32,adc";
+            unit = <1>;
+        };
     };
 
     display {
@@ -83,6 +91,7 @@
             reg = <0>;
             compatible = "sitronix,st7789";
             depends_on = <&spi2>, <&pwm_backlight>;
+            gpio = <&gpio>;
             dc = <6>;
             reset = <7>;
             backlight = <&pwm_backlight>;
@@ -98,6 +107,7 @@
             reg = <0>;
             compatible = "maxim,max98357a";
             depends_on = <&i2s_audio0>;
+            gpio = <&gpio>;
             sdn_pin = <10>;
             active_level = <1>;
         };
@@ -107,6 +117,7 @@
         buttons0: gpio-keys@0 {
             reg = <0>;
             compatible = "gpio-keys";
+            gpio = <&gpio>;
             next_pin = <16>;
             prev_pin = <17>;
             enter_pin = <3>;
@@ -130,6 +141,7 @@
         rgb_led0: led@0 {
             reg = <0>;
             compatible = "worldsemi,ws2812";
+            depends_on = <&rmt>;
             gpio = <48>;
             led_count = <1>;
             brightness = <28>;
@@ -141,6 +153,7 @@
         lights_sensor0: light@0 {
             reg = <0>;
             compatible = "gl5528,photoresistor";
+            depends_on = <&adc0>;
             adc_pin = <1>;
             adc_channel = <0>;
             adc_atten = <3>;  // 11dB attenuation (0~3.9V范围)

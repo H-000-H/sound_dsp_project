@@ -15,6 +15,7 @@ extern int board_driver_probe_spi(device_t*);
 extern int board_driver_probe_i2s(device_t*);
 extern int board_driver_probe_uart(device_t*);
 extern int board_driver_probe_rmt_led(device_t*);
+extern int board_driver_probe_adc(device_t*);
 
 /* volatile 全局变量: 每次写入都是可观察副作用, 编译器无法省略 */
 static volatile void* s_fake_ref;
@@ -33,4 +34,5 @@ static void __attribute__((constructor, used)) _force_probe_link(void)
     s_fake_ref = (void*)board_driver_probe_i2s;
     s_fake_ref = (void*)board_driver_probe_uart;
     s_fake_ref = (void*)board_driver_probe_rmt_led;
+    s_fake_ref = (void*)board_driver_probe_adc;
 }

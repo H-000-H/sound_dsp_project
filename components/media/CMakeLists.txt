@@ -5,7 +5,7 @@ idf_component_register(
         "include"
     REQUIRES
         board
-        hw_hal
+        hal_if
         core
         algorithm
         chmorgan__esp-libhelix-mp3

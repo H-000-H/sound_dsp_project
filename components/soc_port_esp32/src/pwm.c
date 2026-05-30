@@ -1,8 +1,8 @@
 #include "hal_pwm.h"
 
 #include "driver/ledc.h"
-#include "esp_log.h"
-#include <stdlib.h>
+#include "osal.h"
+#include "VFS.h"
 #include <string.h>
 
 static const char* kTag = "hal_pwm";
@@ -12,19 +12,32 @@ typedef struct {
     ledc_mode_t speed_mode;
 } hal_pwm_impl_t;
 
+/* ── BSS 静态池（禁止运行时动态分配） ── */
+#define PWM_IMPL_POOL_SIZE 8
+static hal_pwm_impl_t s_pwm_pool[PWM_IMPL_POOL_SIZE];
+static uint8_t s_pwm_used[PWM_IMPL_POOL_SIZE];
+
 static int pwm_init_impl(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resolution_bits)
 {
-    if (pwm == NULL) {
+    if (pwm == NULL || pin < 0 || freq_hz <= 0 || resolution_bits <= 0 || resolution_bits > 14) {
         return -1;
     }
 
-    hal_pwm_impl_t* impl = (hal_pwm_impl_t*)calloc(1, sizeof(hal_pwm_impl_t));
-    if (impl == NULL) {
-        ESP_LOGE(kTag, "malloc failed");
-        return -1;
+    hal_pwm_impl_t* impl = NULL;
+    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) {
+        if (!s_pwm_used[i]) {
+            s_pwm_used[i] = 1;
+            impl = &s_pwm_pool[i];
+            memset(impl, 0, sizeof(*impl));
+            break;
+        }
+    }
+    if (!impl) {
+        DRV_LOGE(kTag, "impl pool exhausted");
+        return VFS_ERR_NOMEM;
     }
 
-    /* Auto-select timer and channel */
+    int ret = 0;
     static int next_timer = 0;
     static int next_channel = 0;
     ledc_timer_t timer = LEDC_TIMER_0 + (next_timer % 4);
@@ -42,11 +55,11 @@ static int pwm_init_impl(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resol
         .clk_cfg = LEDC_AUTO_CLK,
     };
 
-    esp_err_t ret = ledc_timer_config(&timer_cfg);
-    if (ret != ESP_OK) {
-        ESP_LOGE(kTag, "ledc_timer_config failed: %d", ret);
-        free(impl);
-        return ret;
+    esp_err_t esp_ret = ledc_timer_config(&timer_cfg);
+    if (esp_ret != ESP_OK) {
+        DRV_LOGE(kTag, "ledc_timer_config failed: %d", esp_ret);
+        ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+        goto err_pool;
     }
 
     ledc_channel_config_t chan_cfg = {
@@ -58,19 +71,23 @@ static int pwm_init_impl(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resol
         .hpoint = 0,
     };
 
-    ret = ledc_channel_config(&chan_cfg);
-    if (ret != ESP_OK) {
-        ESP_LOGE(kTag, "ledc_channel_config failed: %d", ret);
-        free(impl);
-        return ret;
+    esp_ret = ledc_channel_config(&chan_cfg);
+    if (esp_ret != ESP_OK) {
+        DRV_LOGE(kTag, "ledc_channel_config failed: %d", esp_ret);
+        ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+        goto err_pool;
     }
 
     impl->channel = channel;
     impl->speed_mode = speed_mode;
     pwm->_impl = impl;
-    ESP_LOGI(kTag, "PWM init: pin=%d freq=%d res=%d timer=%d chan=%d",
+    DRV_LOGI(kTag, "PWM init: pin=%d freq=%d res=%d timer=%d chan=%d",
              pin, freq_hz, resolution_bits, timer, channel);
     return 0;
+
+err_pool:
+    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) { if (&s_pwm_pool[i] == impl) { s_pwm_used[i] = 0; break; } }
+    return ret;
 }
 
 static int pwm_set_duty_impl(hal_pwm_channel_t* pwm, uint32_t duty)
@@ -81,7 +98,7 @@ static int pwm_set_duty_impl(hal_pwm_channel_t* pwm, uint32_t duty)
 
     hal_pwm_impl_t* impl = (hal_pwm_impl_t*)pwm->_impl;
     esp_err_t ret = ledc_set_duty_and_update(impl->speed_mode, impl->channel, duty, 0);
-    return (ret == ESP_OK) ? 0 : ret;
+    return (ret == ESP_OK) ? 0 : (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
 }
 
 static int pwm_get_duty_impl(hal_pwm_channel_t* pwm, uint32_t* duty)
@@ -102,7 +119,7 @@ static int pwm_deinit_impl(hal_pwm_channel_t* pwm)
 
     hal_pwm_impl_t* impl = (hal_pwm_impl_t*)pwm->_impl;
     ledc_stop(impl->speed_mode, impl->channel, 0);
-    free(impl);
+    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) { if (&s_pwm_pool[i] == impl) { s_pwm_used[i] = 0; break; } }
     pwm->_impl = NULL;
     return 0;
 }
@@ -117,18 +134,17 @@ void hal_pwm_init_struct(hal_pwm_channel_t* pwm)
     pwm->_impl = NULL;
 }
 
-/* ======================================================================== */
-/*  平台驱动层 — 通过 DRIVER_REGISTER + fops 提供标准设备接口                */
-/*  上层驱动调 device_ioctl(pwm_dev, PWM_CMD_SET_DUTY, &val) 即可          */
-/* ======================================================================== */
-
 #include "driver.h"
 
 typedef struct {
     hal_pwm_channel_t pwm;
 } pwm_bl_priv_t;
 
-static int8_t pwm_bl_ioctl(device_t* dev, int cmd, void* arg)
+#define PWM_PRIV_POOL_SIZE 2
+static pwm_bl_priv_t s_pwm_priv_pool[PWM_PRIV_POOL_SIZE];
+static uint8_t s_pwm_priv_used[PWM_PRIV_POOL_SIZE];
+
+static int pwm_bl_ioctl(device_t* dev, int cmd, void* arg)
 {
     pwm_bl_priv_t* priv = (pwm_bl_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
@@ -163,23 +179,31 @@ static int pwm_bl_probe(device_t* dev)
     device_get_prop_int(dev, "resolution_bits", &res);
 
     if (pin < 0) {
-        ESP_LOGE(kTag, "pwm_bl: missing pwm_pin");
+        DRV_LOGE(kTag, "pwm_bl: missing pwm_pin");
         return -1;
     }
 
-    pwm_bl_priv_t* priv = (pwm_bl_priv_t*)calloc(1, sizeof(pwm_bl_priv_t));
-    if (!priv) return -1;
+    pwm_bl_priv_t* priv = NULL;
+    for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) {
+        if (!s_pwm_priv_used[i]) {
+            s_pwm_priv_used[i] = 1;
+            priv = &s_pwm_priv_pool[i];
+            memset(priv, 0, sizeof(*priv));
+            break;
+        }
+    }
+    if (!priv) return VFS_ERR_NOMEM;
 
     hal_pwm_init_struct(&priv->pwm);
     int ret = priv->pwm.init(&priv->pwm, pin, freq, res);
     if (ret != 0) {
-        free(priv);
+        for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) { if (&s_pwm_priv_pool[i] == priv) { s_pwm_priv_used[i] = 0; break; } }
         return ret;
     }
 
     device_set_priv(dev, priv);
     dev->ops = &pwm_bl_fops;
-    ESP_LOGI(kTag, "pwm_bl probed: pin=%d freq=%d res=%d", pin, freq, res);
+    DRV_LOGI(kTag, "pwm_bl probed: pin=%d freq=%d res=%d", pin, freq, res);
     return 0;
 }
 
@@ -188,7 +212,7 @@ static int pwm_bl_remove(device_t* dev)
     pwm_bl_priv_t* priv = (pwm_bl_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->pwm.deinit(&priv->pwm);
-        free(priv);
+        for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) { if (&s_pwm_priv_pool[i] == priv) { s_pwm_priv_used[i] = 0; break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

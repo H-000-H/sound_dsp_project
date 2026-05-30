@@ -15,5 +15,5 @@
         "ui/inc"
         "cloud/inc"
         "input/include"
-    REQUIRES board capability algorithm core drivers hw_hal freertos json mqtt config chmorgan__esp-libhelix-mp3 lvgl__lvgl esp_wifi esp_netif esp_event nvs_flash
+    REQUIRES board capability algorithm core drivers hal_if freertos json mqtt config chmorgan__esp-libhelix-mp3 lvgl__lvgl esp_wifi esp_netif esp_event nvs_flash
 )

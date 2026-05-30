@@ -1,19 +1,23 @@
 #include "ws2812_driver.h"
 
 #include "driver.h"
-#include "hal_rmt_led.h"
-#include "esp_log.h"
-#include <stdlib.h>
+#include "vfs_rmt.h"
+#include "osal.h"
+#include <string.h>
 
 static const char* kTag = "ws2812";
 
 typedef struct {
-    hal_rmt_led_t led;
+    device_t* rmt_dev;
 } ws2812_priv_t;
 
-/* ── VFS 操作表 ── */
-static int8_t ws2812_init(device_t* dev);
-static int8_t ws2812_ioctl(device_t* dev, int cmd, void* arg);
+/* ── BSS 静态池（禁止运行时动态分配） ── */
+#define WS2812_PRIV_POOL_SIZE 2
+static ws2812_priv_t s_ws2812_pool[WS2812_PRIV_POOL_SIZE];
+static uint8_t s_ws2812_used[WS2812_PRIV_POOL_SIZE];
+
+static int ws2812_init(device_t* dev);
+static int ws2812_ioctl(device_t* dev, int cmd, void* arg);
 static const file_operation_t ws2812_fops = {
     .init  = ws2812_init,
     .ioctl = ws2812_ioctl,
@@ -22,43 +26,67 @@ static const file_operation_t ws2812_fops = {
 static int ws2812_probe(device_t* dev)
 {
     int gpio = -1, led_count = 1, brightness = 128;
-    uint32_t rmt_res = 10 * 1000 * 1000;
+    uint32_t rmt_res = 10U * 1000U * 1000U;
 
     device_get_prop_int(dev, "gpio", &gpio);
     device_get_prop_int(dev, "led_count", &led_count);
     device_get_prop_int(dev, "brightness", &brightness);
     device_get_prop_int(dev, "rmt_resolution_hz", (int*)&rmt_res);
 
-    if (gpio < 0) {
-        ESP_LOGE(kTag, "missing gpio");
+    if (gpio < 0 || led_count != 1) {
+        DRV_LOGE(kTag, "invalid gpio or led_count");
         return -1;
     }
 
-    ws2812_priv_t* priv = (ws2812_priv_t*)calloc(1, sizeof(ws2812_priv_t));
+    ws2812_priv_t* priv = NULL;
+    for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
+        if (!s_ws2812_used[i]) {
+            s_ws2812_used[i] = 1;
+            priv = &s_ws2812_pool[i];
+            memset(priv, 0, sizeof(*priv));
+            break;
+        }
+    }
     if (!priv) return -1;
 
-    hal_rmt_led_init_struct(&priv->led);
-    int ret = priv->led.init(&priv->led, gpio, rmt_res);
-    if (ret != 0) {
-        free(priv);
-        return ret;
+    int ret = 0;
+    priv->rmt_dev = device_get_parent(dev);
+    if (!priv->rmt_dev) {
+        ret = -1;
+        goto err_pool;
     }
 
-    priv->led.set_brightness(&priv->led, (uint8_t)brightness);
-    priv->led.off(&priv->led);
+    rmt_init_arg_t init_arg = { .gpio = gpio, .resolution_hz = rmt_res };
+    ret = device_ioctl(priv->rmt_dev, RMT_CMD_INIT, &init_arg);
+    if (ret != 0) {
+        goto err_pool;
+    }
+
+    uint8_t b = (uint8_t)brightness;
+    ret = device_ioctl(priv->rmt_dev, RMT_CMD_SET_BRIGHT, &b);
+    if (ret == 0) ret = device_ioctl(priv->rmt_dev, RMT_CMD_OFF, NULL);
+    if (ret != 0) {
+        device_ioctl(priv->rmt_dev, RMT_CMD_DEINIT, NULL);
+        goto err_pool;
+    }
 
     device_set_priv(dev, priv);
     dev->ops = &ws2812_fops;
-    ESP_LOGI(kTag, "probed: GPIO=%d, count=%d, brightness=%d", gpio, led_count, brightness);
+    DRV_LOGI(kTag, "probed: GPIO=%d, count=%d, brightness=%d", gpio, led_count, brightness);
     return 0;
+
+err_pool:
+    for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) { if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; } }
+    return ret;
 }
 
 static int ws2812_remove(device_t* dev)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (priv) {
-        priv->led.off(&priv->led);
-        free(priv);
+        device_ioctl(priv->rmt_dev, RMT_CMD_OFF, NULL);
+        device_ioctl(priv->rmt_dev, RMT_CMD_DEINIT, NULL);
+        for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) { if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; } }
         device_set_priv(dev, NULL);
     }
     return 0;
@@ -66,9 +94,9 @@ static int ws2812_remove(device_t* dev)
 
 DRIVER_REGISTER(ws2812, "worldsemi,ws2812", ws2812_probe, ws2812_remove);
 
-/* ── 公开 API ── */
-static int8_t ws2812_init(device_t* dev)
+static int ws2812_init(device_t* dev)
 {
+    (void)dev;
     return 0;
 }
 
@@ -76,25 +104,25 @@ static int ws2812_set_color(device_t* dev, uint8_t r, uint8_t g, uint8_t b)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
-    return priv->led.set_rgb(&priv->led, r, g, b);
+    rmt_rgb_arg_t color = { .r = r, .g = g, .b = b };
+    return device_ioctl(priv->rmt_dev, RMT_CMD_SET_RGB, &color);
 }
 
 static int ws2812_set_brightness(device_t* dev, uint8_t brightness)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
-    return priv->led.set_brightness(&priv->led, brightness);
+    return device_ioctl(priv->rmt_dev, RMT_CMD_SET_BRIGHT, &brightness);
 }
 
 static int ws2812_off(device_t* dev)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
-    return priv->led.off(&priv->led);
+    return device_ioctl(priv->rmt_dev, RMT_CMD_OFF, NULL);
 }
 
-/* ── ioctl ── */
-static int8_t ws2812_ioctl(device_t* dev, int cmd, void* arg)
+static int ws2812_ioctl(device_t* dev, int cmd, void* arg)
 {
     switch (cmd) {
     case WS2812_CMD_SET_COLOR:

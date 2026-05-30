@@ -1,8 +1,8 @@
 #include "driver.h"
+#include "osal.h"
 
 #include "board_devtable.h"
 
-#include "esp_log.h"
 #include <string.h>
 
 static const char* kTag = "board_drv";
@@ -14,7 +14,7 @@ void board_register_all_drivers(void)
 
 int board_driver_probe_all(void)
 {
-    ESP_LOGI(kTag, "probing all devices from compile-time DTS table ...");
+    DRV_LOGI(kTag, "probing all devices from compile-time DTS table ...");
     uint8_t ok = 0, fail = 0;
 
     const device_id_t* order = board_probe_order();
@@ -32,14 +32,14 @@ int board_driver_probe_all(void)
          // 容错处理：设备存在，但没有找到匹配的驱动程序
         if (!probe) 
         {
-            ESP_LOGW(kTag, "no generated probe for '%s' (compat=%s)",
+            DRV_LOGW(kTag, "no generated probe for '%s' (compat=%s)",
                      device_get_name(dev), device_get_compatible(dev));
             device_set_status(dev, DEVICE_STATUS_DISABLED);// 标记为残废
             fail++;
             continue;
         }
 
-        ESP_LOGI(kTag, "probing '%s' (%s) ...",
+        DRV_LOGI(kTag, "probing '%s' (%s) ...",
                  device_get_name(dev), device_get_compatible(dev));
         int ret = probe(dev);// 调用probe函数
         if (ret == 0) 
@@ -51,17 +51,17 @@ int board_driver_probe_all(void)
         {
             device_set_status(dev, DEVICE_STATUS_ERROR);
             fail++;
-            ESP_LOGE(kTag, "probe FAILED: %s (ret=%d)", device_get_name(dev), ret);
+            DRV_LOGE(kTag, "probe FAILED: %s (ret=%d)", device_get_name(dev), ret);
         }
     }
 
-    ESP_LOGI(kTag, "probe complete: %d ok, %d fail", ok, fail);
+    DRV_LOGI(kTag, "probe complete: %d ok, %d fail", ok, fail);
     return fail;
 }
 
 int board_driver_remove_all(void)
 {
-    ESP_LOGI(kTag, "removing all devices (reverse probe order) ...");
+    DRV_LOGI(kTag, "removing all devices (reverse probe order) ...");
 
     const device_id_t* order = board_probe_order();
     int count = board_probe_order_count();

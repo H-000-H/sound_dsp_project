@@ -1,10 +1,8 @@
 #include "gpio_key_driver.h"
 
 #include "driver.h"
-#include "hal_gpio.h"
-#include "esp_log.h"
-#include "esp_timer.h"
-#include <stdlib.h>
+#include "vfs_gpio.h"
+#include "osal.h"
 #include <string.h>
 
 static const char* kTag = "gpio_key";
@@ -24,19 +22,25 @@ typedef struct {
 } key_entry_t;
 
 typedef struct {
+    device_t*    gpio_dev;
     key_entry_t keys[MAX_KEYS];
     int         key_count;
 } gpio_key_priv_t;
 
+/* ── BSS 静态池（禁止运行时动态分配） ── */
+#define GPIO_KEY_PRIV_POOL_SIZE 2
+static gpio_key_priv_t s_gpio_key_pool[GPIO_KEY_PRIV_POOL_SIZE];
+static uint8_t s_gpio_key_used[GPIO_KEY_PRIV_POOL_SIZE];
+
 /* 获取 tick in ms */
 static uint32_t current_tick_ms(void)
 {
-    return (uint32_t)(esp_timer_get_time() / 1000);
+    return osal_time_ms();
 }
 
 /* ── VFS 操作表 ── */
-static int8_t gpio_key_init(device_t* dev);
-static int8_t gpio_key_ioctl(device_t* dev, int cmd, void* arg);
+static int gpio_key_init(device_t* dev);
+static int gpio_key_ioctl(device_t* dev, int cmd, void* arg);
 static const file_operation_t gpio_key_fops = {
     .init  = gpio_key_init,
     .ioctl = gpio_key_ioctl,
@@ -48,8 +52,23 @@ static int gpio_key_probe(device_t* dev)
     int debounce = 50;
     device_get_prop_int(dev, "debounce_ms", &debounce);
 
-    gpio_key_priv_t* priv = (gpio_key_priv_t*)calloc(1, sizeof(gpio_key_priv_t));
+    gpio_key_priv_t* priv = NULL;
+    for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) {
+        if (!s_gpio_key_used[i]) {
+            s_gpio_key_used[i] = 1;
+            priv = &s_gpio_key_pool[i];
+            memset(priv, 0, sizeof(*priv));
+            break;
+        }
+    }
     if (!priv) return -1;
+
+    int ret = 0;
+    priv->gpio_dev = device_get_phandle_dev(dev, "gpio");
+    if (!priv->gpio_dev) {
+        ret = -1;
+        goto err_pool;
+    }
 
     /* 解析按键引脚: "next_pin", "prev_pin", "enter_pin", "esc_pin" */
     struct { const char* key; const char* name; } pin_names[] = {
@@ -80,27 +99,34 @@ static int gpio_key_probe(device_t* dev)
             .pullup = HAL_GPIO_PULL_ENABLE,
             .pulldown = HAL_GPIO_PULL_DISABLE,
         };
-        hal_gpio_init(&cfg);
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &cfg);
+        if (ret != 0) {
+            goto err_pool;
+        }
 
-        ESP_LOGI(kTag, "  key '%s' = GPIO%d", k->name, pin);
+        DRV_LOGI(kTag, "  key '%s' = GPIO%d", k->name, pin);
         priv->key_count++;
     }
 
     if (priv->key_count == 0) {
-        ESP_LOGW(kTag, "no keys found, probe anyway");
+        DRV_LOGW(kTag, "no keys found, probe anyway");
     }
 
     device_set_priv(dev, priv);
     dev->ops = &gpio_key_fops;
-    ESP_LOGI(kTag, "probed: %d keys, debounce=%dms", priv->key_count, debounce);
+    DRV_LOGI(kTag, "probed: %d keys, debounce=%dms", priv->key_count, debounce);
     return 0;
+
+err_pool:
+    for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) { if (&s_gpio_key_pool[i] == priv) { s_gpio_key_used[i] = 0; break; } }
+    return ret;
 }
 
 static int gpio_key_remove(device_t* dev)
 {
     gpio_key_priv_t* priv = (gpio_key_priv_t*)device_get_priv(dev);
     if (priv) {
-        free(priv);
+        for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) { if (&s_gpio_key_pool[i] == priv) { s_gpio_key_used[i] = 0; break; } }
         device_set_priv(dev, NULL);
     }
     return 0;
@@ -109,7 +135,7 @@ static int gpio_key_remove(device_t* dev)
 DRIVER_REGISTER(gpio_key, "gpio-keys", gpio_key_probe, gpio_key_remove);
 
 /* ── 公开 API ── */
-static int8_t gpio_key_init(device_t* dev)
+static int gpio_key_init(device_t* dev)
 {
     return 0;
 }
@@ -124,7 +150,11 @@ static int gpio_key_scan(device_t* dev, gpio_key_state_t* out, int max_keys)
 
     for (int i = 0; i < priv->key_count && count < max_keys; i++) {
         key_entry_t* k = &priv->keys[i];
-        int raw = hal_gpio_get_level(k->gpio_pin);
+        gpio_level_arg_t level_arg = { .pin = k->gpio_pin, .level = 0 };
+        if (device_ioctl(priv->gpio_dev, GPIO_CMD_GET_LEVEL, &level_arg) != 0) {
+            continue;
+        }
+        int raw = level_arg.level;
         int pressed = (raw == k->pressed_level);
         int stable = 0;
 
@@ -176,7 +206,7 @@ static int gpio_key_get_count(device_t* dev)
 }
 
 /* ── ioctl ── */
-static int8_t gpio_key_ioctl(device_t* dev, int cmd, void* arg)
+static int gpio_key_ioctl(device_t* dev, int cmd, void* arg)
 {
     switch (cmd) {
     case GPIO_KEY_CMD_SCAN:

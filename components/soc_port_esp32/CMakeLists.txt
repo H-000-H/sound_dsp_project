@@ -1,14 +1,17 @@
 idf_component_register(
     SRCS
-        "src/hal_gpio.c"
-        "src/hal_spi_bus.c"
-        "src/hal_i2s_bus.c"
-        "src/hal_pwm.c"
-        "src/hal_rmt_led.c"
-        "src/hal_uart.c"
-        "src/hal_i2c.c"
-    INCLUDE_DIRS "include"
+        "src/spi.c"
+        "src/i2c.c"
+        "src/uart.c"
+        "src/pwm.c"
+        "src/gpio.c"
+        "src/rmt_led.c"
+        "src/i2s_bus.c"
+        "src/adc.c"
     PRIV_REQUIRES
+        board
+        hal_if
+        osal
         esp_driver_gpio
         esp_driver_spi
         esp_driver_i2s
@@ -17,5 +20,5 @@ idf_component_register(
         esp_driver_uart
         esp_driver_i2c
         freertos
-        board
+        esp_adc
 )

@@ -23,9 +23,13 @@ typedef struct
 /* ── 设备状态 ── */
 typedef enum {
     DEVICE_STATUS_DISABLED = 0,
+    DEVICE_STATUS_UNINIT,
     DEVICE_STATUS_READY,
-    DEVICE_STATUS_ERROR,
     DEVICE_STATUS_PROBED,
+    DEVICE_STATUS_RUNNING,
+    DEVICE_STATUS_SUSPENDED,
+    DEVICE_STATUS_ERROR,
+    DEVICE_STATUS_REMOVED,
 } device_status_t;
 
 /* ── 前向声明 ── */
@@ -49,11 +53,13 @@ typedef struct device_node
 /* ── VFS 操作表 ── */
 typedef struct file_operation
 {
-    int8_t (*init) (device_t* dev);
-    int8_t (*open) (device_t* dev, void* arg);
-    int8_t (*write)(device_t* dev, const void* buffer, size_t len);
-    int8_t (*read) (device_t* dev, void* buffer, size_t len);
-    int8_t (*ioctl)(device_t* dev, int cmd, void* arg);
+    int (*init) (device_t* dev);
+    int (*open) (device_t* dev, void* arg);
+    int (*write)(device_t* dev, const void* buffer, size_t len);
+    int (*read) (device_t* dev, void* buffer, size_t len);
+    int (*ioctl)(device_t* dev, int cmd, void* arg);
+    int (*suspend)(device_t* dev);
+    int (*resume)(device_t* dev);
 } file_operation_t;
 
 /* ── 运行时设备实例 ── */
@@ -63,6 +69,8 @@ typedef struct device_instance
     device_status_t        status;     /* 运行时状态 */
     void*                  priv_data;  /* 驱动私有数据 */
     const file_operation_t* ops;       /* 操作函数表 */
+    struct osal_mutex*     lock;       /*  per-device mutex (lazy init, 首次 lock 时创建) */
+    void*                  platform_data; /* board 层注入的静态数据, probe 前设置 */
 } device_t;
 
 /* ── 查找设备 ── */
@@ -96,6 +104,10 @@ int device_get_count(void);
 
 /* ── 设备树加载 ── */
 int device_tree_init(void);
+
+/* ── 设备锁（首次 lock 时 lazy 创建 mutex） ── */
+int device_lock(device_t* dev);
+int device_unlock(device_t* dev);
 
 /* ── VFS 便捷包装（空指针安全, 调用 dev->ops） ── */
 int device_open(device_t* dev, void* arg);

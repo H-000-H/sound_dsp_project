@@ -13,9 +13,5 @@ idf_component_register(
         "sensor/inc"
     REQUIRES
         board
-        hw_hal
-        freertos
-        esp_adc
-    PRIV_REQUIRES
-        esp_timer
+        osal
 )

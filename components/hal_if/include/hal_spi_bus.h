@@ -10,8 +10,9 @@ extern "C" {
 
 typedef struct hal_spi_bus hal_spi_bus_t;
 
-typedef struct 
+typedef struct
 {
+    int host_id;
     int mosi;
     int miso;
     int sclk;
@@ -19,7 +20,7 @@ typedef struct
     int dma_chan;  /* -1 = auto */
 } hal_spi_bus_config_t;
 
-typedef struct 
+typedef struct
 {
     int mode;            /* 0-3 */
     int clock_speed_hz;
@@ -27,7 +28,7 @@ typedef struct
     int queue_size;
 } hal_spi_device_config_t;
 
-struct hal_spi_bus 
+struct hal_spi_bus
 {
     int (*init)(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg,
                 const hal_spi_device_config_t* dev_cfg);
@@ -37,12 +38,10 @@ struct hal_spi_bus
     void* _impl;
 };
 
-/* 使用默认函数指针初始化结构体（必须在调用 init 前调用） */
 void hal_spi_bus_init_struct(hal_spi_bus_t* bus);
 
-/* ── ioctl 命令 (平台驱动模式) ── */
-#define SPI_CMD_DEINIT      0x40  /* arg: NULL */
-#define SPI_CMD_READ        0x41  /* arg: spi_read_arg_t* */
+#define SPI_CMD_DEINIT      0x40
+#define SPI_CMD_READ        0x41
 
 typedef struct {
     uint8_t* data;

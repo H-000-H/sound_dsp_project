@@ -601,3 +601,224 @@ elif os.name == 'posix' ...
 - **`-u` 标志格式**：`target_link_options(INTERFACE "-u board_driver_probe_xxx")` 组合字符串格式在 Ninja generator 下正常工作
 - **Xo肩肿 align**：`device_node_t` 重排后 3 个 `uint8_t` 放在末尾，编译器自动填充到 4 字节边界，结构体从 32→24 字节
 - **不要改 VFS 包装**：`device_write()` / `device_ioctl()` 返回值保持 `int`，因外部调用者赋值给 `int`，改 `int8_t` 会产生大量 -Wsign-conversion 警告
+
+---
+
+## 23. 架构重建第三阶段：OS/MCU 完全解耦 (hw_hal → hal_if + soc_port_esp32 + osal)
+
+> 2026-05-30 · 实现脱离 ESP32/ESP-IDF/FreeRTOS，可换 OS 或裸机
+
+### 23.1 动机
+
+原先的 `hw_hal/` 层虽然在结构上是函数指针表封装，但所有实现文件直接包含 ESP-IDF 和 FreeRTOS 头文件、使用 `pdMS_TO_TICKS`、返回 `ESP_ERR_*` 错误码。公共驱动代码中随处可见：
+- `#include "freertos/FreeRTOS.h"`
+- `pdMS_TO_TICKS()`
+- `esp_err_t` / `ESP_ERR_INVALID_ARG`
+- `gpio_num_t`
+- `spi_device_handle_t`
+- `adc_oneshot_*`
+
+导致 hw_hal 无法在非 ESP-IDF 平台上编译。
+
+### 23.2 架构变更
+
+**单层 hw_hal → 三层结构：**
+
+```
+hw_hal（已删除）
+  ├── hal_if/          portable 接口定义（函数指针表 struct + ioctl cmd）
+  ├── soc_port_esp32/  ESP-IDF 平台实现（probe + impl + DRIVER_REGISTER）
+  └── osal/            OS 抽象层（task/mutex/time/log/memory）
+```
+
+| 层级 | 职责 | 可移植性 |
+|------|------|---------|
+| `hal_if/` | 纯头文件接口 + 空桩 | 任何 C 编译器 |
+| `osal/` | OS 抽象 API + FreeRTOS 实现 | API 可移植，实现已隔离 |
+| `soc_port_esp32/` | ESP32 平台 HAL 实现 | 换芯片只需新建 `soc_port_xxx/` |
+
+### 23.3 新增组件
+
+**osal/** (`components/osal/`)
+- `osal.h` — 统一 API：`osal_time_ms()`、`osal_delay_ms()`、`osal_ticks_from_ms()`、`osal_calloc/free()`、`osal_mutex_*()`、`osal_task_create()`、`osal_log()`
+- `osal_freertos.c` — FreeRTOS 后端实现（`PRIV_REQUIRES esp_timer freertos`）
+- DRV_LOGE/DRV_LOGW/DRV_LOGI/DRV_LOGD 宏（替代 ESP_LOG*）
+- `OSAL_WAIT_FOREVER`（替代 `portMAX_DELAY`）
+
+**hal_if/** (`components/hal_if/`)
+- 8 个纯接口头文件（`hal_spi_bus.h`、`hal_i2c.h`、`hal_uart.h`、`hal_pwm.h`、`hal_gpio.h`、`hal_rmt_led.h`、`hal_i2s_bus.h`、`hal_adc.h`）
+- 仅有函数指针结构体 + ioctl 命令宏定义
+- `dummy.c` 确保 CMake 有空桩
+
+**soc_port_esp32/** (`components/soc_port_esp32/`)
+- 8 个 ESP-IDF 实现文件，每个含 `hal_xxx_init_struct()` + `_impl` 函数 + `DRIVER_REGISTER` probe/remove
+- `CMakeLists.txt` 在 `PRIV_REQUIRES` 中依赖 `esp_driver_*` 等 ESP 组件
+
+### 23.4 文件变动清单
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| **新建** | `components/osal/include/osal.h` | OS 抽象 API |
+| **新建** | `components/osal/src/osal_freertos.c` | FreeRTOS 实现 |
+| **新建** | `components/osal/CMakeLists.txt` | 新组件 |
+| **新建** | `components/hal_if/include/hal_*.h` | 8 个接口头文件 |
+| **新建** | `components/hal_if/src/hal_if_dummy.c` | 空桩 |
+| **新建** | `components/hal_if/CMakeLists.txt` | 新组件 |
+| **新建** | `components/soc_port_esp32/src/*.c` | 8 个 ESP-IDF 实现 |
+| **新建** | `components/soc_port_esp32/CMakeLists.txt` | 新组件 |
+| **重写** | `components/board/src/task_utils.c` | `xTaskCreatePinnedToCore` → `osal_task_create` |
+| **修改** | `components/board/CMakeLists.txt` | 删除 osal_freertos.c，添加 osal REQUIRES |
+| **修改** | `components/drivers/CMakeLists.txt` | `hw_hal` → `hal_if`，添加 osal |
+| **修改** | `components/media/CMakeLists.txt` | `hw_hal` → `hal_if` |
+| **修改** | `components/app/CMakeLists.txt` | `hw_hal` → `hal_if` |
+| **修改** | `components/service/CMakeLists.txt` | `hw_hal` → `hal_if` |
+| **修改** | `root CMakeLists.txt` | EXTRA_COMPONENT_DIRS + `-Wl,--undefined=` flags |
+| **删除** | `components/hw_hal/` | 整个目录 |
+| **删除** | `components/board/include/osal.h` | 移植到独立 osal/ 组件 |
+| **删除** | `components/board/src/osal_freertos.c` | 移植到独立 osal/ 组件 |
+
+### 23.5 CMake 踩坑集
+
+**① EXTRA_COMPONENT_DIRS 必须在 project() 前**
+```cmake
+list(APPEND EXTRA_COMPONENT_DIRS ${CMAKE_SOURCE_DIR}/components/soc_port_esp32)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)  # 之后调用 project()
+project(sound_dsp_project)
+```
+
+**② `-Wl,--undefined=` 替代 `-u` 以避免 CMake Ninja 参数展开问题**
+- `target_link_options(sound_dsp_project.elf PRIVATE "-u" "symbol")` → CMake Ninja generator 会将所有 `-u` 和符号名合并为单一参数，导致只有第一个 `-u` 生效
+- 改用 `-Wl,--undefined=symbol`（单参数，无空格/逗号问题）→ 正常
+
+**③ osal/ 组件需 PRIV_REQUIRES**
+- `osal_freertos.c` 使用 `esp_timer.h`（`osal_time_ms`）和 FreeRTOS API
+- 必须添加 `PRIV_REQUIRES esp_timer freertos`，否则编译时报 `esp_timer.h: No such file or directory`
+
+**④ DTC 扫描路径更新**
+- `board/CMakeLists.txt` 中 `dtc-lite.py` 的驱动扫描路径从 `hw_hal/src` 改为 `soc_port_esp32/src`
+
+### 23.6 依赖约束（更新后）
+
+```
+app → system → service → capability → board → drivers → hal_if
+                ↓                     ↑                   ↓
+              media ──────────────────┤        soc_port_esp32 (ESP-IDF)
+              algorithm               │                   ↓
+              config                  └──── osal ──── ESP-IDF/FreeRTOS
+```
+
+**OSAL 层规则**：
+- hal_if/ 和 drivers/ 只通过 osal.h 访问 OS 功能
+- soc_port_esp32/ 同时使用 osal.h + ESP-IDF API
+- 换 OS → 新建 `osal/src/osal_xxx.c`（如 `osal_rtthread.c`）
+- 换 MCU → 新建 `soc_port_xxx/src/`，实现 hal_if 接口
+
+### 23.7 已消除的 ESP-IDF 依赖
+
+| 原本的依赖 | 替代 |
+|-----------|------|
+| `freertos/FreeRTOS.h` | `osal.h` |
+| `pdMS_TO_TICKS()` | `osal_ticks_from_ms()` |
+| `ESP_LOGI/ESP_LOGW/ESP_LOGE` | `DRV_LOGI/DRV_LOGW/DRV_LOGE` |
+| `portMAX_DELAY` | `OSAL_WAIT_FOREVER` |
+| `xTaskCreatePinnedToCore` | `osal_task_create()` |
+| `ESP_ERR_INVALID_ARG` | `-1` |
+| `gpio_num_t`（在接口中） | `int`（在接口中） |
+| `spi_device_handle_t`（在接口中） | `void* _impl`（在接口中） |
+| `adc_oneshot_*`（在接口中） | `adc_read_arg_t` + `ADC_CMD_READ_RAW` |
+
+### 23.8 GPIO 快路径设计（特殊处理）
+
+**动机**：GPIO 翻转是 ns 级操作，函数指针间接调用 + VFS 查表的开销不可忽略。SPI 一次传 1KB 几十 μs，那 2ns 间接调用噪声无所谓；GPIO 几十 ns 的操作不能容忍多一层间接。
+
+**设计**：双路径共存，编译期开关切换。
+
+```c
+// hal_if/include/hal_gpio.h
+#define HAL_GPIO_FAST_PATH 1   // 默认启用
+
+#if HAL_GPIO_FAST_PATH
+int hal_gpio_set_level(int pin, int level);  // 直接函数，编译器可内联
+int hal_gpio_get_level(int pin);
+// ...
+#endif
+```
+
+| 路径 | 方式 | 延迟 | 适用场景 |
+|------|------|------|---------|
+| 快路径 | 直接 `hal_gpio_set_level()` | ~10-20ns | bit-bang、时序敏感信号 |
+| 通用路径 | `device_ioctl(dev, GPIO_CMD_SET_LEVEL, &arg)` | ~50-100ns | 普通 GPIO、架构统一 |
+
+**为什么其他模块不需要**：
+- SPI/I2C/I2S/UART 的操作耗时在 μs 级，函数指针开销可忽略
+- ADC/PWM/RMT 的操作本身就有 μs 级等待
+- GPIO 是唯一一个 ns 级操作的外设
+
+**HAL_GPIO_FAST_PATH=0 的效果**：
+- `hal_gpio_set_level()` 等声明不可见，调用处编译报错
+- 所有 GPIO 操作强制走 `device_ioctl()`，换芯片时零额外适配工作
+- `soc_port_esp32/gpio.c` 内部的 `hal_gpio_*` 实现函数仍在（被 ioctl 调用），只是不对外暴露
+
+---
+
+## 24. Linux Kernel 风格 Goto 错误处理重构
+
+> 2026-05-30 · 将 11 个文件中 15 个函数的 inline pool 清理改为 goto 标签 cleanup
+
+### 24.1 动机
+
+之前的 4 pillar 重构（静态池 + 零动态分配）引入大量重复的 inline pool 清理代码：
+
+```c
+for (int i = 0; i < XXX_POOL_SIZE; i++) { if (&s_pool[i] == ptr) { s_used[i] = 0; break; } }
+```
+
+每条错误路径此代码重复一次，函数有 3-7 条错误路径，导致：
+- 代码膨胀（st7789_probe 有 7+ 处重复）
+- 维护风险（新增错误路径容易漏掉清理）
+- 和 Linux kernel 的 goto 惯例不一致
+
+### 24.2 模式
+
+**单资源（pool slot 独占）**：
+
+```c
+    err_pool:
+        for (int i = 0; i < POOL_SIZE; i++) { if (&s_pool[i] == ptr) { s_used[i] = 0; break; } }
+        return ret;
+```
+
+**多资源（逆序清理）**：
+
+```c
+err_bus:            ← 最后一个分配的资源先清理
+    spi_bus_free(impl->host);
+err_mutex:          ← 第二个分配的资源
+    osal_mutex_destroy(impl->lock);
+err_pool:           ← 第一个分配的资源最后清理
+    for (...) pool release;
+    return ret;
+```
+
+### 24.3 改造文件
+
+| 文件 | 关键函数 | 标签数 |
+|------|---------|--------|
+| `soc_port_esp32/src/spi.c` | `spi_init_impl` | 3 (err_bus → err_mutex → err_pool) |
+| `soc_port_esp32/src/rmt_led.c` | `rmt_led_init_impl` | 3 (err_encoder → err_channel → err_pool) |
+| `soc_port_esp32/src/i2c.c` | `i2c_init_impl` | 2 (err_mutex → err_pool) |
+| `soc_port_esp32/src/i2s_bus.c` | `i2s_init_impl` | 2 (err_chan → err_pool) |
+| `soc_port_esp32/src/uart.c` | `uart_init_impl`, `uart_probe` | 1 |
+| `soc_port_esp32/src/adc.c` | `adc_probe` | 1 |
+| `soc_port_esp32/src/pwm.c` | `pwm_init_impl` | 1 |
+| `drivers/display/st7789_driver.c` | `st7789_probe` | 1（7+ 错误路径合并到 1 个标签） |
+| `drivers/audio/max98357a_driver.c` | `max98357a_probe` | 1 |
+| `drivers/input/gpio_key_driver.c` | `gpio_key_probe` | 1 |
+| `drivers/led/ws2812_driver.c` | `ws2812_probe` | 1（2 资源，RMT deinit 内联） |
+
+### 24.4 关键规则
+
+- **标签反向排列**：资源的清理顺序严格与分配顺序相反（先分配的后清理）
+- **ret 前置声明**：`int ret = 0;` 在 pool 分配成功后声明，goto 前赋值，err 标签处统一 `return ret`
+- **DRV_LOGE + VFS_ERR 转换**：在 goto 前完成日志和错误码转换，err 标签只负责清理
+- **单条错误路径不强制 goto**：若函数只有 1 条错误路径（如 `gpio_ctrl_probe`），保留 inline 模式更简洁

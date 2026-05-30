@@ -1,4 +1,6 @@
 #include "device.h"
+#include "VFS.h"
+#include "osal.h"
 
 #include "board_devtable.h"
 
@@ -88,7 +90,11 @@ int device_get_prop_int(const device_t* dev, const char* key, int* val)
     for (int i = 0; i < node->prop_count; i++) {
         if (strcmp(node->props[i].key, key) == 0)
         {
-            *val = atoi(node->props[i].value);
+            char* end = NULL;
+            long parsed = strtol(node->props[i].value, &end, 0);
+            if (!end || *end != '\0') return -1;
+            if (parsed < INT32_MIN || parsed > INT32_MAX) return -1;
+            *val = (int)parsed;
             return 0;
         }
     }
@@ -174,26 +180,59 @@ int device_get_count(void)
 }
 
 /* ── VFS 便捷包装 ── */
+static int device_can_access(const device_t* dev)
+{
+    if (!dev || !dev->ops) return -1;
+    if (dev->status == DEVICE_STATUS_PROBED ||
+        dev->status == DEVICE_STATUS_RUNNING ||
+        dev->status == DEVICE_STATUS_READY) {
+        return 0;
+    }
+    return -1;
+}
+
 int device_open(device_t* dev, void* arg)
 {
-    if (!dev || !dev->ops || !dev->ops->open) return -1;
-    return dev->ops->open(dev, arg);
+    if (device_can_access(dev) != 0 || !dev->ops->open) return -1;
+    int ret = dev->ops->open(dev, arg);
+    if (ret == 0 && dev->status == DEVICE_STATUS_PROBED) {
+        dev->status = DEVICE_STATUS_RUNNING;
+    }
+    return ret;
 }
 
 int device_write(device_t* dev, const void* buf, size_t len)
 {
-    if (!dev || !dev->ops || !dev->ops->write) return -1;
+    if (device_can_access(dev) != 0 || !dev->ops->write) return -1;
     return dev->ops->write(dev, buf, len);
 }
 
 int device_read(device_t* dev, void* buf, size_t len)
 {
-    if (!dev || !dev->ops || !dev->ops->read) return -1;
+    if (device_can_access(dev) != 0 || !dev->ops->read) return -1;
     return dev->ops->read(dev, buf, len);
 }
 
 int device_ioctl(device_t* dev, int cmd, void* arg)
 {
-    if (!dev || !dev->ops || !dev->ops->ioctl) return -1;
+    if (device_can_access(dev) != 0 || !dev->ops->ioctl) return -1;
     return dev->ops->ioctl(dev, cmd, arg);
+}
+
+/* ── 设备锁（lazy 创建 mutex） ── */
+int device_lock(device_t* dev)
+{
+    if (!dev) return -1;
+    if (!dev->lock) {
+        osal_mutex_t* m = NULL;
+        if (osal_mutex_create(&m) != 0) return -1;
+        dev->lock = m;
+    }
+    return osal_mutex_lock(dev->lock, OSAL_WAIT_FOREVER);
+}
+
+int device_unlock(device_t* dev)
+{
+    if (!dev || !dev->lock) return -1;
+    return osal_mutex_unlock(dev->lock);
 }

@@ -18,7 +18,10 @@ idf_component_register(
         "include"
         "${GENERATED_BOARD_DIR}"
     REQUIRES
+        osal
         freertos
+    PRIV_REQUIRES
+        esp_timer
 )
 
 # Generated sources
@@ -36,7 +39,7 @@ add_custom_command(
     OUTPUT
         ${GENERATED_BOARD_SRCS}
         ${GENERATED_BOARD_HDRS}
-    COMMAND ${Python3_EXECUTABLE} "${DTC_LITE}" "${BOARD_DTS}" "${GENERATED_BOARD_DIR}" "${CMAKE_SOURCE_DIR}/components/drivers" "${CMAKE_SOURCE_DIR}/components/hw_hal/src"
+    COMMAND ${Python3_EXECUTABLE} "${DTC_LITE}" "${BOARD_DTS}" "${GENERATED_BOARD_DIR}" "${CMAKE_SOURCE_DIR}/components/drivers" "${CMAKE_SOURCE_DIR}/components/soc_port_esp32/src"
     DEPENDS
         "${BOARD_DTS}"
         "${DTC_LITE}"
