@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "display/st7789_driver.c"
+        "display/pwm_backlight.c"
         "audio/max98357a_driver.c"
         "input/gpio_key_driver.c"
         "led/ws2812_driver.c"
@@ -14,4 +15,5 @@ idf_component_register(
     REQUIRES
         board
         osal
+        hal_if
 )

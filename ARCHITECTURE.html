@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound DSP Project - 架构文档</title>
+    <style>
+        :root {
+            --bg-color: #f5f6f8;
+            --text-main: #24292e;
+            --text-light: #586069;
+            --sidebar-bg: #ffffff;
+            --content-bg: #ffffff;
+            --border-color: #e1e4e8;
+            --code-bg: #f6f8fa;
+            --link-color: #0366d6;
+            --blockquote-bg: #f0f4f8;
+            --blockquote-border: #c8d1db;
+            --table-header-bg: #f6f8fa;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            line-height: 1.6;
+            font-size: 16px;
+        }
+
+        .sidebar {
+            width: 280px;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            padding: 24px 16px;
+            box-sizing: border-box;
+            z-index: 100;
+        }
+
+        .sidebar h3 {
+            margin-top: 0;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 1.1em;
+            color: var(--text-main);
+        }
+
+        .toc ul {
+            list-style: none;
+            padding-left: 16px;
+            margin: 0;
+        }
+
+        .toc > ul {
+            padding-left: 0;
+        }
+
+        .toc li {
+            margin: 6px 0;
+        }
+
+        .toc a {
+            text-decoration: none;
+            color: var(--text-light);
+            font-size: 14px;
+            display: block;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .toc a:hover {
+            background-color: var(--code-bg);
+            color: var(--link-color);
+            font-weight: 500;
+        }
+
+        .main-content {
+            margin-left: 280px;
+            flex: 1;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .content-wrapper {
+            background: var(--content-bg);
+            padding: 50px 60px;
+            max-width: 900px;
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            box-sizing: border-box;
+        }
+
+        h1, h2, h3, h4, h5 {
+            color: var(--text-main);
+            font-weight: 600;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+
+        h1 {
+            font-size: 2.2em;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        h2 {
+            font-size: 1.7em;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+            margin-top: 2em;
+        }
+
+        h3 { font-size: 1.3em; }
+        p { margin-bottom: 16px; }
+
+        pre {
+            background-color: var(--code-bg);
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            border: 1px solid var(--border-color);
+        }
+
+        code {
+            background-color: var(--code-bg);
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            color: #cb2431;
+        }
+
+        pre code {
+            color: inherit;
+            background: transparent;
+            padding: 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            border: 1px solid var(--border-color);
+            padding: 10px 16px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--table-header-bg);
+            font-weight: 600;
+        }
+
+        blockquote {
+            border-left: 4px solid var(--blockquote-border);
+            margin: 0 0 20px 0;
+            padding: 15px 20px;
+            background-color: var(--blockquote-bg);
+            color: #444d56;
+            border-radius: 0 6px 6px 0;
+        }
+
+        blockquote p:last-child { margin-bottom: 0; }
+        img { max-width: 100%; height: auto; border-radius: 6px; }
+
+        hr {
+            height: 1px;
+            background-color: var(--border-color);
+            border: none;
+            margin: 40px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h3>📑 目录</h3>
+        <div class="toc">
+            <div class="toc">
+<ul>
+<li><a href="#sound-dsp-project">🏛️ Sound DSP Project — 核心架构全景解析</a><ul>
+<li><a href="#1-system-hierarchy">🧭 1. 系统层级总览 (System Hierarchy)</a><ul>
+<li><a href="#_1">依赖方向</a></li>
+<li><a href="#_2">层级约束</a></li>
+</ul>
+</li>
+<li><a href="#2-devicetree-vfs">🌳 2. DeviceTree + VFS 模型</a><ul>
+<li><a href="#_3">构建与解析工作流</a></li>
+<li><a href="#_4">两阶段设备模型</a></li>
+<li><a href="#vfs">VFS 操作表</a></li>
+<li><a href="#_5">驱动自注册宏</a></li>
+</ul>
+</li>
+<li><a href="#3-capability-engine">🛡️ 3. Capability Engine (硬件能力门面层)</a></li>
+<li><a href="#4">🧠 4. 确定性内存布局</a><ul>
+<li><a href="#_6">优化收益</a></li>
+</ul>
+</li>
+<li><a href="#5-ui">🕹️ 5. UI 交互导航流</a></li>
+<li><a href="#6">🧩 6. 核心模块职责全览</a></li>
+<li><a href="#7-dsp">🎛️ 7. DSP 核心算法</a><ul>
+<li><a href="#eq">多段级联 EQ</a></li>
+<li><a href="#biquad">Biquad 传递函数</a></li>
+<li><a href="#_7">抗爆音平滑</a></li>
+</ul>
+</li>
+<li><a href="#8">📏 8. 开发红线规范</a></li>
+<li><a href="#_8">📚 附：关键文档索引</a></li>
+</ul>
+</li>
+</ul>
+</div>
+
+        </div>
+    </div>
+    <div class="main-content">
+        <div class="content-wrapper">
+            <h1 id="sound-dsp-project">🏛️ Sound DSP Project — 核心架构全景解析</h1>
+<blockquote>
+<p><strong>面向对象、极致解耦的嵌入式硬软件一体化架构白皮书</strong></p>
+<p>⏱️ <strong>最后更新</strong>：2026-05-31
+📌 <strong>核心宗旨</strong>：单向依赖、静态内存、物理与逻辑绝对隔离</p>
+</blockquote>
+<hr />
+<h2 id="1-system-hierarchy">🧭 1. 系统层级总览 (System Hierarchy)</h2>
+<p>项目采用严密的模块化分层演进模型。数据与控制流严格遵循<strong>单向垂直向下</strong>的原则，彻底杜绝循环依赖。</p>
+<pre><code class="language-text">┌──────────────────────────────────────────────────────────────────────────────────┐
+│  app 层 (LVGL GUI)                                                               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┬──────────────────┐         │
+│  │ ThingsCloud│ │  core    │ │  screen  │ │ Settings │    Music          │         │
+│  │ WiFi/MQTT │ │ 主循环    │ │  锁屏    │ │  WiFi    │    播放器+选歌    │         │
+│  ├──────────┤ ├──────────┤ ├──────────┤ │  亮度    │    音量同步       │         │
+│  │ FreeRTOS │ │ app      │ │  res     │ └──────────┴──────────────────┘         │
+│  │ lcd_task │ │ 设置/串口 │ │ 图片/字体 │                                        │
+│  │ C0       │ │          │ │ Lottie   │     nav/card (卡片轮播)                  │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────────────────────────────────┘ │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  service 层 — C++ 业务服务                                                       │
+│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────────┐          │
+│  │  audio   │ │   ui     │ │  cloud    │ │  input   │ │   network    │          │
+│  │  播放器   │ │  入口    │ │  MQTT    │ │  按键    │ │   TCP/IP     │          │
+│  └──────────┘ └──────────┘ └───────────┘ └──────────┘ └──────────────┘          │
+│                ┌────────────────────────────────────────────────────┐             │
+│       system   │ SystemRuntime · TaskManager · 服务注册表             │             │
+│                └────────────────────────────────────────────────────┘             │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  capability 层 — 服务与驱动之间的门面层 (C)                                        │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐                    │
+│  │  render    │ │   audio    │ │   input    │ │    led     │                    │
+│  │  engine    │ │   engine   │ │   engine   │ │   engine   │                    │
+│  └────────────┘ └────────────┘ └────────────┘ └────────────┘                    │
+│  每个 engine: device_find() → device_open() → device_ioctl()                     │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  board 层 — DeviceTree 运行时 + VFS 包装                                          │
+│  ┌──────────────────────────────────────────────────────────────────────┐        │
+│  │  device_find() · device_open() · device_ioctl() · device_read()      │        │
+│  │  device_write() · device_lock() · device_unlock()                    │        │
+│  │  空安全分发：dev-&gt;ops-&gt;ioctl / dev-&gt;ops-&gt;read ...                     │        │
+│  └──────────────────────────────────────────────────────────────────────┘        │
+│  ┌──────────────────────────────────────────────────────────────────────┐        │
+│  │  board_device.c — 运行时 device_t 实例、属性访问器                     │        │
+│  │  board_driver.c — 按拓扑序 probe、DRIVER_REGISTER 注册                │        │
+│  └──────────────────────────────────────────────────────────────────────┘        │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  drivers 层 — C 硬件驱动 (全部 static, VFS ops table)                              │
+│  ├─ display/st7789_driver.c    显示驱动 (ST7789)                                   │
+│  ├─ display/pwm_backlight.c    PWM 背光驱动                                        │
+│  ├─ audio/max98357a_driver.c   音频功放驱动                                        │
+│  ├─ input/gpio_key_driver.c    按键驱动                                            │
+│  ├─ led/ws2812_driver.c        RGB LED驱动                                        │
+│  └─ sensor/light_sensor_driver.c  光敏传感器驱动                                   │
+│                                                                                    │
+│  每个驱动: static const file_operation_t xxx_fops = {{ .init, .ioctl, ... }};         │
+│           DRIVER_REGISTER(xxx, &quot;compat,string&quot;, probe, remove);                    │
+│           dev-&gt;ops = &amp;xxx_fops;  /* probe 中设置 */                                │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  soc_port_esp32 层 — ESP32 平台 HAL 实现 (ESP-IDF)                                  │
+│  spi · i2c · uart · pwm · gpio · rmt_led · i2s_bus · adc                          │
+│  每个模块: hal_xxx_init_struct() + _impl 函数 + DRIVER_REGISTER                     │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  hal_if 层 — 纯接口定义 (函数指针结构体 + ioctl 宏)                                  │
+│  hal_gpio.h · hal_spi_bus.h · hal_i2s_bus.h · hal_pwm.h · hal_rmt_led.h           │
+│  纯头文件，无实现代码，可移植到任意 C 编译器                                          │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  osal 层 — OS 抽象 (task/mutex/time/log/memory)                                    │
+│  osal.h → osal_freertos.c (FreeRTOS 后端)                                          │
+│  换 OS 只需新建 osal_rtthread.c / osal_baremetal.c                                 │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  algorithm 层 — 纯计算，零硬件依赖                                                   │
+│  buffer/FIFO · DSP/EQ (Q31 定点 Biquad 滤波器)                                     │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  ESP-IDF — FreeRTOS · LWIP · ESP-NETIF · MBEDTLS · DRIVERS                        │
+└──────────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="_1">依赖方向</h3>
+<pre><code>app → system → service → capability → board → drivers → hal_if
+                ↓                                         ↑
+              media ──────────────────────────────────────┤
+              algorithm (纯 DSP, 无硬件依赖)               │
+              config (运行时 JSON 配置)                     │
+              core (Lifecycle, EventBus) ──────────────────┘
+                                                          │
+              soc_port_esp32 ─────────── 使用 ────────────┤
+              osal ──────────────────── 使用 ─────────────┤
+</code></pre>
+<h3 id="_2">层级约束</h3>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>禁止依赖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>board/</code>, <code>hal_if/</code>, <code>core/</code></td>
+<td>任何上层模块</td>
+</tr>
+<tr>
+<td><code>drivers/</code></td>
+<td>UI、App、Service、LVGL</td>
+</tr>
+<tr>
+<td><code>service/</code></td>
+<td>驱动、HAL、ESP-IDF (全通过 capability)</td>
+</tr>
+<tr>
+<td><code>system/</code></td>
+<td>App、UI</td>
+</tr>
+<tr>
+<td><code>algorithm/</code></td>
+<td>RTOS、HAL、任何硬件接口</td>
+</tr>
+<tr>
+<td><code>media/</code></td>
+<td>Service、App、UI</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-devicetree-vfs">🌳 2. DeviceTree + VFS 模型</h2>
+<p>项目全面拥抱 Linux 驱动哲学，采用<strong>编译期 mini DeviceTree</strong> 结合 VFS 操作表。改外设只需改 <code>board.dts</code>，无需动 C 代码。</p>
+<h3 id="_3">构建与解析工作流</h3>
+<pre><code class="language-text">[board.dts]
+    │
+    ▼
+dtc-lite.py (编译期 Python 解析器)
+    │
+    ├── board_nodes.h        (DEV_ID 枚举 + device_node_t 只读表)
+    ├── board_devtable.c     (.rodata 设备节点数组)
+    └── board_probe.c        (按拓扑序排序的 probe 函数指针表)
+    │
+    ▼
+board_driver_probe_all()    (启动时按序 probe)
+    │
+    ▼
+device_find() / device_ioctl() / device_write()    (运行时 VFS 访问)
+</code></pre>
+<h3 id="_4">两阶段设备模型</h3>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>数据类型</th>
+<th>内存段</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>编译期</td>
+<td><code>device_node_t</code></td>
+<td><code>.rodata</code> (只读)</td>
+<td>节点名、Compatible、KV 属性、依赖拓扑</td>
+</tr>
+<tr>
+<td>运行时</td>
+<td><code>device_t</code></td>
+<td><code>.bss</code></td>
+<td>节点指针、运行状态、priv_data、Ops 函数表</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>device_node_t</code> 全部 <code>const</code>，零运行时解析开销。<code>device_t</code> 开机时通过 <code>device_tree_init()</code> 极速装载。</p>
+</blockquote>
+<h3 id="vfs">VFS 操作表</h3>
+<pre><code class="language-c">typedef struct file_operation {{
+    int8_t (*init) (device_t* dev);
+    int8_t (*open) (device_t* dev, void* arg);
+    int8_t (*write)(device_t* dev, const void* buffer, size_t len);
+    int8_t (*read) (device_t* dev, void* buffer, size_t len);
+    int8_t (*ioctl)(device_t* dev, int cmd, void* arg);
+}} file_operation_t;
+</code></pre>
+<p>分发函数自动执行空安全检查（<code>dev &amp;&amp; dev-&gt;ops &amp;&amp; dev-&gt;ops-&gt;ioctl</code>），拦截非法解引用。</p>
+<h3 id="_5">驱动自注册宏</h3>
+<pre><code class="language-c">DRIVER_REGISTER(max98357a, &quot;maxim,max98357a&quot;, max98357a_probe, max98357a_remove);
+</code></pre>
+<p>编译期 <code>dtc-lite.py</code> 自动扫描 <code>.c</code> 文件提取注册信息，按硬件依赖树生成安全 Probe/Remove 序列。</p>
+<blockquote>
+<p><strong>⚠️ 链接注意</strong>：纯靠 probe 表激活的驱动（无其他代码直接调用）需加 <code>-Wl,--undefined=symbol</code> 防止被归档器吞掉（详见 <a href="../NOTICE.md#19-⚠️-链接器大坑纯-probe-表驱动的符号被吞噬">NOTICE.md#19</a>）。</p>
+</blockquote>
+<hr />
+<h2 id="3-capability-engine">🛡️ 3. Capability Engine (硬件能力门面层)</h2>
+<p>隔离业务与驱动的最后一道防火墙。Service 层绝对禁止包含驱动头文件或直接调底层函数。</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>绑定设备</th>
+<th>暴露操作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>render_engine</code></td>
+<td><code>lcd0</code> (ST7789)</td>
+<td>flush, fill_screen, set_backlight, get_display_size</td>
+</tr>
+<tr>
+<td><code>audio_engine</code></td>
+<td><code>speaker_amp0</code> (MAX98357A)</td>
+<td>play, set_volume, set_enable</td>
+</tr>
+<tr>
+<td><code>input_engine</code></td>
+<td><code>buttons0</code> (gpio_key)</td>
+<td>scan, get_key_count</td>
+</tr>
+<tr>
+<td><code>led_engine</code></td>
+<td><code>rgb_led0</code> (WS2812)</td>
+<td>set_color, set_brightness, off</td>
+</tr>
+</tbody>
+</table>
+<p><strong>通信链路</strong>：Engine 内部封装 <code>device_find("name") → device_open() → device_ioctl()</code></p>
+<hr />
+<h2 id="4">🧠 4. 确定性内存布局</h2>
+<p>严格的静态规划，彻底压榨 ESP32-S3 性能，告别碎片化死锁。</p>
+<pre><code class="language-text">┌────────────────────────────────────────────────────────────┐
+│  内部高速 SRAM (Internal SRAM) ~512KB                       │
+│  ├─ FreeRTOS 内核 + 核心任务栈                     ~80KB   │
+│  ├─ LVGL Draw Buffer (TLSF 算法缓冲)              ~140KB   │
+│  ├─ lwIP 网络协议栈底层缓冲                        ~60KB   │
+│  ├─ WiFi 驱动与协议栈                              ~80KB   │
+│  └─ 系统预留与其他                                  余量    │
+├────────────────────────────────────────────────────────────┤
+│  外部扩展 PSRAM 8MB                                         │
+│  ├─ LVGL Display Buffer (双缓冲)                  ~192KB   │
+│  ├─ Lottie 矢量动画渲染专用缓冲                    160KB   │
+│  ├─ LCD 刷新任务栈                                  8KB   │
+│  ├─ 串口收发环形缓冲                               ~64KB   │
+│  └─ DSP / EQ 音频算法工作区                      ~7.5MB   │
+└────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="_6">优化收益</h3>
+<table>
+<thead>
+<tr>
+<th>优化项</th>
+<th>改前</th>
+<th>改后</th>
+<th>收益</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lottie 缓冲区</td>
+<td><code>.bss</code> 段 SRAM</td>
+<td>PSRAM 动态分配</td>
+<td>释放 160KB SRAM</td>
+</tr>
+<tr>
+<td>显示缓冲区</td>
+<td><code>MALLOC_CAP_DMA</code></td>
+<td><code>MALLOC_CAP_SPIRAM</code></td>
+<td>56KB 移出 DRAM</td>
+</tr>
+<tr>
+<td><code>LV_MEM_SIZE</code></td>
+<td>32KB</td>
+<td>128KB</td>
+<td>解决复杂绘制死锁</td>
+</tr>
+<tr>
+<td><code>dram0.bss</code></td>
+<td>9,344 Bytes</td>
+<td>5,376 Bytes</td>
+<td>占用骤降 42%</td>
+</tr>
+<tr>
+<td>总静态 DRAM</td>
+<td>~31.3 KB</td>
+<td>~26.5 KB</td>
+<td>整体优化 15%</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-ui">🕹️ 5. UI 交互导航流</h2>
+<pre><code class="language-text"> 🔒 LockScreen ───[ENTER]──▶ 📋 CardMenu ───[ENTER]──▶ ⚙️ Settings / 🎵 Music / 💻 Serial
+        ▲                                                         │
+        └───────────────────────────[ESC]─────────────────────────┘
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>内容</th>
+<th>交互</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Layer 1 (锁屏)</td>
+<td>全屏紫灰底色 + 状态栏 (WiFi/蓝牙/电量/时间)</td>
+<td>ENTER 解锁</td>
+</tr>
+<tr>
+<td>Layer 2 (菜单)</td>
+<td>3 卡横向阻尼轮播 (设置/音乐/串口)</td>
+<td>PREV/NEXT 切换, ENTER 确认</td>
+</tr>
+<tr>
+<td>Layer 3 (业务)</td>
+<td>沉浸式功能页</td>
+<td>ESC 返回</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6">🧩 6. 核心模块职责全览</h2>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>核心职责</th>
+<th>外部依赖限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app/lvgl</code></td>
+<td>240×240 GUI (锁屏/菜单/音乐/设置/串口终端)</td>
+<td>service, system</td>
+</tr>
+<tr>
+<td><code>core/</code></td>
+<td>Lifecycle / EventBus / ConfigStore / Log</td>
+<td><strong>绝对零依赖</strong></td>
+</tr>
+<tr>
+<td><code>system/</code></td>
+<td>SystemRuntime / TaskManager / 服务注册表</td>
+<td>core</td>
+</tr>
+<tr>
+<td><code>service/audio</code></td>
+<td>MP3 帧解码、数字音量平滑控制、I2S 功放</td>
+<td>capability, core</td>
+</tr>
+<tr>
+<td><code>service/ui</code></td>
+<td>LVGL 主循环守护、App 层注册</td>
+<td>capability, core</td>
+</tr>
+<tr>
+<td><code>service/cloud</code></td>
+<td>WiFi 态管理 / MQTT 通信 / 遥测上报</td>
+<td>capability, core</td>
+</tr>
+<tr>
+<td><code>service/input</code></td>
+<td>GPIO 按键轮询扫描、去抖、LVGL 键值注入</td>
+<td>capability, core</td>
+</tr>
+<tr>
+<td><code>media/</code></td>
+<td>MP3 解码器封装 + I2S 输出 + EQ 滤波</td>
+<td>board, hal_if, core, algorithm</td>
+</tr>
+<tr>
+<td><code>capability/</code></td>
+<td>硬能力门面层，原子动作接口</td>
+<td>board, drivers</td>
+</tr>
+<tr>
+<td><code>board/</code></td>
+<td>DTS 编译期结构体 + 运行时 device_t + VFS 路由</td>
+<td>drivers</td>
+</tr>
+<tr>
+<td><code>drivers/</code></td>
+<td>外设驱动 (ST7789/MAX98357A/WS2812/gpio_key/light_sensor/pwm_backlight)</td>
+<td>hal_if, osal</td>
+</tr>
+<tr>
+<td><code>soc_port_esp32/</code></td>
+<td>ESP32 平台 HAL 实现 (SPI/I2C/UART/PWM/GPIO/RMT/I2S/ADC)</td>
+<td>hal_if, osal</td>
+</tr>
+<tr>
+<td><code>hal_if/</code></td>
+<td>函数指针表接口定义 (纯头文件, 零实现)</td>
+<td><strong>纯接口</strong></td>
+</tr>
+<tr>
+<td><code>osal/</code></td>
+<td>OS 抽象层 (task/mutex/time/log/memory)</td>
+<td><strong>纯接口</strong></td>
+</tr>
+<tr>
+<td><code>config/</code></td>
+<td>编译时开关 + 运行时 JSON 配置</td>
+<td><strong>零依赖</strong></td>
+</tr>
+<tr>
+<td><code>algorithm/dsp/</code></td>
+<td>Biquad 定点滤波、多段 EQ</td>
+<td><strong>纯计算</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-dsp">🎛️ 7. DSP 核心算法</h2>
+<h3 id="eq">多段级联 EQ</h3>
+<p>基于 Biquad（双二阶）滤波器的 N 段可配置均衡器（典型 5 段）。系数转换为 Q31 定点格式，压榨 ESP32-S3 向量计算资源。</p>
+<h3 id="biquad">Biquad 传递函数</h3>
+<pre><code class="language-text">        b₀ + b₁·z⁻¹ + b₂·z⁻²
+H(z) = ──────────────────────
+        a₀ + a₁·z⁻¹ + a₂·z⁻²
+</code></pre>
+<h3 id="_7">抗爆音平滑</h3>
+<p>音量调节采用一阶 IIR 平滑（Q15 精度，<code>ALPHA_Q15 = 33</code>），消除数字增益跳变的 Pop-noise。</p>
+<hr />
+<h2 id="8">📏 8. 开发红线规范</h2>
+<table>
+<thead>
+<tr>
+<th>原则</th>
+<th>要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>沟通先行</strong></td>
+<td>改核心逻辑或引入新抽象前必须讨论</td>
+</tr>
+<tr>
+<td><strong>适度封装</strong></td>
+<td>三个相似行 &gt; 一个过早抽象。不设计未来需求</td>
+</tr>
+<tr>
+<td><strong>文档同步</strong></td>
+<td>踩坑必须同步更新 <code>NOTICE.md</code>，注明日期</td>
+</tr>
+<tr>
+<td><strong>C++ 极简</strong></td>
+<td>禁用 RTTI 与 try-catch。跨文件回调用纯静态成员函数或 C 指针</td>
+</tr>
+<tr>
+<td><strong>驱动扩展</strong></td>
+<td>2 步：丢入 <code>drivers/</code> + <code>DRIVER_REGISTER</code> → 构建</td>
+</tr>
+<tr>
+<td><strong>层级隔离</strong></td>
+<td><code>board/</code> / <code>hal_if/</code> / <code>core/</code> 不依赖上层；<code>drivers/</code> 不含 UI/App/LVGL</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="_8">📚 附：关键文档索引</h2>
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th>位置</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>项目总览</td>
+<td><a href="../README.md">README.md</a></td>
+<td>选型理由、按键映射、快速开始、开发规范</td>
+</tr>
+<tr>
+<td>踩坑全记录</td>
+<td><a href="../NOTICE.md">NOTICE.md</a></td>
+<td>架构演进史、重大 Bug、链接器/MSYS2 踩坑</td>
+</tr>
+<tr>
+<td>DSP 算法</td>
+<td><code>components/algorithm/dsp/README.md</code></td>
+<td>EQ 滤波器系数详细说明</td>
+</tr>
+</tbody>
+</table>
+        </div>
+    </div>
+</body>
+</html>

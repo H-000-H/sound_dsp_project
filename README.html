@@ -1,360 +1,511 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sound DSP Project — 架构 &amp; 优化报告</title>
-<style>
-:root {
-  --bg: #0E0F14; --surface: #161822; --border: #2C2F3E;
-  --text: #F5F5F7; --text-dim: #8E8E93; --accent: #FF9F0A;
-  --green: #34C759; --blue: #59D0FF; --red: #FF3B6B; --purple: #AF52DE;
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: var(--bg); color: var(--text); line-height: 1.7; padding: 40px 20px;
-}
-.container { max-width: 920px; margin: 0 auto; }
-h1 { font-size: 26px; margin-bottom: 4px; }
-.date { color: var(--text-dim); font-size: 13px; margin-bottom: 24px; }
-h2 { font-size: 20px; color: var(--accent); margin: 36px 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-h3 { font-size: 16px; color: var(--blue); margin: 22px 0 10px; }
-h4 { font-size: 14px; margin: 14px 0 6px; }
-p, li { font-size: 14px; margin-bottom: 6px; }
-a { color: var(--blue); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code { font-family: "SF Mono", "Fira Code", monospace; font-size: 13px; }
-p code, li code { background: var(--surface); padding: 1px 5px; border-radius: 3px; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound DSP Framework - README</title>
+    <style>
+        :root {
+            --bg-color: #f5f6f8;
+            --text-main: #24292e;
+            --text-light: #586069;
+            --sidebar-bg: #ffffff;
+            --content-bg: #ffffff;
+            --border-color: #e1e4e8;
+            --code-bg: #f6f8fa;
+            --link-color: #0366d6;
+            --blockquote-bg: #f0f4f8;
+            --blockquote-border: #c8d1db;
+            --table-header-bg: #f6f8fa;
+        }
 
-/* 提醒 */
-.alert {
-  background: #FF9F0A11; border: 1px solid #FF9F0A33; border-radius: 8px;
-  padding: 12px 16px; font-size: 13px; margin: 12px 0;
-}
+        html {
+            scroll-behavior: smooth;
+        }
 
-/* 卡片 */
-.cards { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
-.card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 14px 16px; flex: 1; min-width: 180px;
-}
-.card .title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-.card p { font-size: 13px; color: var(--text-dim); margin: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            line-height: 1.6;
+            font-size: 16px;
+        }
 
-/* 架构卡片 */
-.arch-row { display: flex; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
-.arch-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px 14px; min-width: 160px; flex: 1;
-}
-.arch-card .tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; margin-bottom: 4px; }
-.tag-app { background: #007AFF33; color: var(--blue); }
-.tag-algo { background: #34C75933; color: var(--green); }
-.tag-svc { background: #FF9F0A33; color: var(--accent); }
-.tag-hal { background: #AF52DE33; color: var(--purple); }
-.tag-bsp { background: #5C5F7333; color: var(--text-dim); }
-.tag-idf { background: #FF3B6B33; color: var(--red); }
-.tag-core { background: #34C75955; color: #69F0AE; }
-.tag-board { background: #FF9F0A55; color: #FFE082; }
-.tag-drv { background: #AF52DE55; color: #CE93D8; }
-.arch-card h4 { font-size: 13px; margin-bottom: 4px; }
-.arch-card p { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+        .sidebar {
+            width: 280px;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            padding: 24px 16px;
+            box-sizing: border-box;
+            z-index: 100;
+        }
 
-/* 表格 */
-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
-th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 7px 10px; border-bottom: 1px solid var(--border); }
-td { padding: 7px 10px; border-bottom: 1px solid var(--surface); }
-tr:hover td { background: var(--surface); }
+        .sidebar h3 {
+            margin-top: 0;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 1.1em;
+            color: var(--text-main);
+        }
 
-/* 代码框 */
-pre {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 14px 16px; font-size: 12px; overflow-x: auto; margin: 10px 0; line-height: 1.5;
-}
+        .toc ul {
+            list-style: none;
+            padding-left: 16px;
+            margin: 0;
+        }
 
-/* 内存布局条 */
-.mem-bar { display: flex; height: 28px; border-radius: 6px; overflow: hidden; margin: 8px 0; font-size: 11px; font-weight: 600; }
-.mem-bar div { display: flex; align-items: center; justify-content: center; color: #FFF; }
-.mem-sram { background: #007AFF; }
-.mem-lvgl { background: #FF9F0A; }
-.mem-lwip { background: #AF52DE; }
-.mem-wifi { background: #FF3B6B; }
-.mem-other { background: #5C5F73; }
-.mem-psram-disp { background: #34C759; }
-.mem-psram-lottie { background: #FF6482; }
-.mem-psram-stack { background: #59D0FF; }
-.mem-psram-free { background: #2C2F3E; }
+        .toc > ul {
+            padding-left: 0;
+        }
 
-.note { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+        .toc li {
+            margin: 6px 0;
+        }
 
-/* 导航流 */
-.flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; margin: 12px 0; }
-.flow-box {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px 14px; text-align: center; flex: 1; min-width: 80px;
-}
-.flow-box .key { font-size: 13px; font-weight: 600; }
-.flow .arrow { color: var(--text-dim); font-size: 18px; margin: 0 4px; }
-</style>
+        .toc a {
+            text-decoration: none;
+            color: var(--text-light);
+            font-size: 14px;
+            display: block;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .toc a:hover {
+            background-color: var(--code-bg);
+            color: var(--link-color);
+            font-weight: 500;
+        }
+
+        .main-content {
+            margin-left: 280px;
+            flex: 1;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .content-wrapper {
+            background: var(--content-bg);
+            padding: 50px 60px;
+            max-width: 900px;
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            box-sizing: border-box;
+        }
+
+        h1, h2, h3, h4, h5 {
+            color: var(--text-main);
+            font-weight: 600;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+
+        h1 {
+            font-size: 2.2em;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        h2 {
+            font-size: 1.7em;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+            margin-top: 2em;
+        }
+
+        h3 { font-size: 1.3em; }
+        p { margin-bottom: 16px; }
+
+        pre {
+            background-color: var(--code-bg);
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            border: 1px solid var(--border-color);
+        }
+
+        code {
+            background-color: var(--code-bg);
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            color: #cb2431;
+        }
+
+        pre code {
+            color: inherit;
+            background: transparent;
+            padding: 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            border: 1px solid var(--border-color);
+            padding: 10px 16px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--table-header-bg);
+            font-weight: 600;
+        }
+
+        blockquote {
+            border-left: 4px solid var(--blockquote-border);
+            margin: 0 0 20px 0;
+            padding: 15px 20px;
+            background-color: var(--blockquote-bg);
+            color: #444d56;
+            border-radius: 0 6px 6px 0;
+        }
+
+        blockquote p:last-child { margin-bottom: 0; }
+        img { max-width: 100%; height: auto; border-radius: 6px; }
+
+        hr {
+            height: 1px;
+            background-color: var(--border-color);
+            border: none;
+            margin: 40px 0;
+        }
+    </style>
 </head>
 <body>
-<div class="container">
-
-<h1>Sound DSP Project</h1>
-<p class="date">更新日期：2026-05-23 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240</p>
-
-<div class="alert">
-<strong>⚠️ 注意事项</strong>：项目开发过程中的踩坑记录、API 隐藏行为等详见 <a href="NOTICE.html">NOTICE.html</a>。
-</div>
-
-<!-- ============================================================ -->
-<h2>1. 架构图</h2>
-
-<pre>┌─────────────────────────────────────────────────────────────────┐
-│  app 层 (LVGL GUI)                                               │
-│  ThingsCloud · core(主循环) · screen · nav · settings/music/serial│
-├─────────────────────────────────────────────────────────────────┤
-│  service 层 — C++ 业务服务                                        │
-│  audio(播放器)  ui(入口)  cloud(MQTT)  input(按键)  network      │
-├─────────────────────────────────────────────────────────────────┤
-│  system — SystemRuntime · TaskManager · 服务注册表                │
-├─────────────────────────────────────────────────────────────────┤
-│  core — Lifecycle · EventBus · ConfigStore · 日志宏              │
-├─────────────────────────────────────────────────────────────────┤
-│  board — DeviceTree 解析 · DRIVER_REGISTER · probe/remove 引擎   │
-├─────────────────────────────────────────────────────────────────┤
-│  drivers — st7789 · max98357a · gpio_key · ws2812 (自注册)       │
-├─────────────────────────────────────────────────────────────────┤
-│  hal — 函数指针表隔离层 (GPIO/SPI/I2S/PWM/RMT_LED)               │
-├─────────────────────────────────────────────────────────────────┤
-│  algorithm — DSP/EQ (Q31 定点, 零硬件依赖)                        │
-├─────────────────────────────────────────────────────────────────┤
-│  ESP-IDF : FreeRTOS LWIP ESP-NETIF MBEDTLS DRIVERS               │
-└─────────────────────────────────────────────────────────────────┘</pre>
-
-<p style="font-size:13px;color:var(--text-dim)">依赖方向: app → system → service → board → drivers → hal → ESP-IDF, core 被 system/service/app 共享</p>
-
-<h3>层约束</h3>
-<table>
-  <tr><th>层级</th><th>不允许依赖</th></tr>
-  <tr><td>board/ (DTS核心)</td><td>无上层模块</td></tr>
-  <tr><td>hal/</td><td>无上层模块</td></tr>
-  <tr><td>drivers/</td><td>UI, app, service, lvgl</td></tr>
-  <tr><td>algorithm/</td><td>UI, RTOS, HAL, 任何硬件</td></tr>
-  <tr><td>service/</td><td>不直接调 HAL/ESP-IDF（全通过 driver）</td></tr>
-  <tr><td>core/</td><td>无上层模块</td></tr>
-</table>
-
-<h3>导航流</h3>
-<div class="flow">
-  <div class="flow-box"><div class="key">🔒 LockScreen</div></div>
-  <div class="arrow">▶</div>
-  <div class="flow-box"><div class="key">📋 CardMenu</div></div>
-  <div class="arrow">▶</div>
-  <div class="flow-box"><div class="key">⚙️ 设置 / 🎵 音乐 / 🔌 串口</div></div>
-  <div class="arrow">◀</div>
-  <div class="flow-box"><div class="key">ESC 返回</div></div>
-</div>
-
-<h3>模块职责一览</h3>
-<table>
-  <tr><th>模块</th><th>解决什么问题</th></tr>
-  <tr><td><strong>app/lvgl</strong></td><td>240×240 屏幕 GUI：锁屏、菜单、设置、播放器、串口终端</td></tr>
-  <tr><td><strong>core/</strong></td><td>Lifecycle/EventBus 基类、日志宏、JSON 配置读取，零硬件依赖</td></tr>
-  <tr><td><strong>system/</strong></td><td>系统编排：SystemRuntime、TaskManager、服务注册表、驱动注册列表</td></tr>
-  <tr><td><strong>service/input</strong></td><td>按键 GPIO 轮询扫描、时间戳消抖、LVGL 回调用</td></tr>
-  <tr><td><strong>service/audio</strong></td><td>MP3 解码、功放控制、音量管理</td></tr>
-  <tr><td><strong>service/cloud</strong></td><td>WiFi 连接、MQTT 协议、数据上报全生命周期</td></tr>
-  <tr><td><strong>board/</strong></td><td>board.dts.json 解析、设备链表构建、driver 注册和 probe 引擎</td></tr>
-  <tr><td><strong>hal/</strong></td><td>ESP-IDF 函数指针封装，驱动不直接调 IDF</td></tr>
-  <tr><td><strong>drivers/</strong></td><td>st7789 显示、max98357a 功放、gpio_key 按键、ws2812 LED（自注册）</td></tr>
-  <tr><td><strong>algorithm/dsp</strong></td><td>多段 EQ 滤波、音量平滑（Q31 定点），零硬件依赖</td></tr>
-</table>
-
-<!-- ============================================================ -->
-<h2>2. 为什么选 ESP32-S3 而不是 C3 / C6</h2>
-
-<table>
-  <tr><th>需求</th><th>C3 (RISC-V 单核)</th><th>C6 (RISC-V 单核)</th><th>S3 (LX7 双核)</th></tr>
-  <tr>
-    <td><strong>PSRAM（刚需）</strong></td>
-    <td style="color:var(--red)">❌ 不支持</td>
-    <td style="color:var(--red)">❌ 不支持</td>
-    <td style="color:var(--green)">✅ Octal SPI 8MB</td>
-  </tr>
-  <tr>
-    <td><strong>Lottie 160KB 缓冲</strong></td>
-    <td style="color:var(--red)">❌ 内部 SRAM 仅 400KB</td>
-    <td style="color:var(--red)">❌ 内部 SRAM 仅 512KB</td>
-    <td style="color:var(--green)">✅ PSRAM 分配，不占内部 RAM</td>
-  </tr>
-  <tr>
-    <td><strong>LVGL 9.x + 240×240</strong></td>
-    <td style="color:var(--accent)">⚠️ 勉强（单核）</td>
-    <td style="color:var(--accent)">⚠️ 勉强（单核）</td>
-    <td style="color:var(--green)">✅ 双核专用渲染</td>
-  </tr>
-  <tr>
-    <td><strong>音频解码 + EQ 实时性</strong></td>
-    <td style="color:var(--red)">❌ 无法同时 UI+音频</td>
-    <td style="color:var(--red)">❌ 无 PSRAM</td>
-    <td style="color:var(--green)">✅ Core 0: UI / Core 1: 音频</td>
-  </tr>
-  <tr>
-    <td><strong>屏幕刷新带宽</strong></td>
-    <td style="color:var(--red)">❌ Quad SPI</td>
-    <td style="color:var(--red)">❌ Quad SPI</td>
-    <td style="color:var(--green)">✅ Octal SPI</td>
-  </tr>
-  <tr>
-    <td><strong>USB-OTG</strong></td>
-    <td style="color:var(--red)">❌</td>
-    <td style="color:var(--red)">❌</td>
-    <td style="color:var(--green)">✅</td>
-  </tr>
-</table>
-
-<div class="alert">
-<strong>S3 不可替代的原因</strong>：Lottie 渲染需要 160KB PSRAM 缓冲区，C3/C6 均无 PSRAM 控制器。双核架构允许 LVGL 渲染（Core 0）和音频解码（Core 1）分离，这是单核 RISC-V 无法做到的。
-</div>
-
-<!-- ============================================================ -->
-<h2>3. 内存优化前后对比</h2>
-
-<h3>① Lottie 缓冲区：内部 SRAM → PSRAM</h3>
-
-<table>
-  <tr><th>项目</th><th>优化前</th><th>优化后</th><th>收益</th></tr>
-  <tr>
-    <td>存储位置</td>
-    <td style="color:var(--red)">.bss 段（内部 SRAM）</td>
-    <td style="color:var(--green)">PSRAM 动态堆</td>
-    <td>释放 160KB 内部 SRAM</td>
-  </tr>
-  <tr>
-    <td>分配时机</td>
-    <td>编译时固定</td>
-    <td>heap_caps_malloc(SPIRAM)</td>
-    <td>按需分配，不占 .bss</td>
-  </tr>
-  <tr>
-    <td>网络稳定性</td>
-    <td style="color:var(--red)">NTP 丢包、MQTT 断连</td>
-    <td style="color:var(--green)">网络栈正常运行</td>
-    <td>直接修复网络问题</td>
-  </tr>
-</table>
-
-<h3>② LVGL 内存堆：32KB → 128KB</h3>
-
-<table>
-  <tr><th>参数</th><th>旧值</th><th>新值</th><th>原因</th></tr>
-  <tr><td>CONFIG_LV_MEM_SIZE</td><td style="color:var(--red)">32KB</td><td style="color:var(--green)">128KB</td><td>draw layer buffer 耗尽死锁</td></tr>
-  <tr><td>ThorVG 线程栈</td><td>默认</td><td style="color:var(--green)">≥ 32768</td><td>Lottie 渲染崩溃</td></tr>
-</table>
-
-<h3>③ 内存布局（典型运行态）</h3>
-
-<p style="font-size:13px;font-weight:600;color:var(--text-dim);margin-bottom:4px">内部 SRAM ~512KB</p>
-<div class="mem-bar">
-  <div class="mem-sram" style="width:16%">FreeRTOS 80K</div>
-  <div class="mem-lvgl" style="width:27%">LVGL TLSF 140K</div>
-  <div class="mem-lwip" style="width:12%">lwIP 60K</div>
-  <div class="mem-wifi" style="width:16%">WiFi 80K</div>
-  <div class="mem-other" style="width:29%">其他 ~剩余</div>
-</div>
-
-<p style="font-size:13px;font-weight:600;color:var(--text-dim);margin-bottom:4px;margin-top:12px">PSRAM 8MB</p>
-<div class="mem-bar">
-  <div class="mem-psram-disp" style="width:2%">显示 192K</div>
-  <div class="mem-psram-lottie" style="width:2%">Lottie 160K</div>
-  <div class="mem-psram-stack" style="width:0.1%">栈 8K</div>
-  <div class="mem-psram-free" style="width:95.9%">剩余 ~7.5MB ← DSP EQ 待用</div>
-</div>
-
-<h3>④ 其他关键参数</h3>
-<table>
-  <tr><th>参数</th><th>值</th><th>说明</th></tr>
-  <tr><td>LCD 任务栈</td><td>8KB (PSRAM)</td><td>Core 0, pri=5</td></tr>
-  <tr><td>MQTT 任务栈</td><td>4KB</td><td>Core 1, pri=5</td></tr>
-  <tr><td>字库容量</td><td>3755 汉字 + FA</td><td>从 6 字 → 完整 GB2312</td></tr>
-  <tr><td>Octal PSRAM</td><td>GPIO 8-15 被占用</td><td>ESC 使用 GPIO 46（可用引脚）</td></tr>
-</table>
-
-<!-- ============================================================ -->
-<h2>4. 开发规范 &amp; 按键映射</h2>
-
-<div class="cards">
-  <div class="card">
-    <div class="title">📐 架构规则</div>
-    <p>app → system → service → board → drivers → hal → IDF · algorithm 零硬件依赖 · core 无上层依赖</p>
-  </div>
-  <div class="card">
-    <div class="title">📝 文档规则</div>
-    <p>改完写 NOTICE · 文件带日期 · 不擅自改代码 · 新架构先问</p>
-  </div>
-  <div class="card">
-    <div class="title">🔧 C++ 规范</div>
-    <p>禁用 RTTI/异常 · 回调用静态方法/函数指针 · 新增驱动三步骤：创建 → DRIVER_REGISTER → driver_list 加一行</p>
-  </div>
-</div>
-
-<table>
-  <tr><th>按键</th><th>GPIO</th><th>功能</th></tr>
-  <tr><td>PREV</td><td>17</td><td>焦点上移 / 减小值 / 左滑</td></tr>
-  <tr><td>NEXT</td><td>16</td><td>焦点下移 / 增大值 / 右滑</td></tr>
-  <tr><td>ENTER</td>
-    <td>3</td>
-    <td>解锁 / 确认 / 切换</td></tr>
-  <tr><td>ESC</td>
-    <td>46</td>
-    <td>返回上级</td></tr>
-</table>
-
-<p style="font-size:13px;color:var(--text-dim)">检测流程：KeyInput::process() → gpio_key_scan() → 消抖 → get_pressed_gpio()</p>
-
-<!-- ============================================================ -->
-<h2>5. DeviceTree 硬件描述</h2>
-
-<p>JSON 格式的 mini DeviceTree（<code>components/board/board.dts.json</code>）作为唯一硬件配置入口：</p>
-<pre>{
-    "soc": "esp32s3",
-    "devices": [
-        { "name": "i2s0", "compatible": "esp32,i2s-bus",
-          "properties": { "ws_pin": 4, "bclk_pin": 5, "dout_pin": 6 } },
-        { "name": "display", "compatible": "sitronix,st7789",
-          "depends_on": "spi0",
-          "properties": { "width": 240, "height": 240,
-            "dc": 3, "reset": 4, "backlight": 15 } }
-    ]
-}</pre>
-
-<p><strong>工作流程</strong>：</p>
-<pre>board.dts.json ──解析──▶ device_list
-         board_register_all_drivers() ◀─── DRIVER_REGISTER 宏
-            board_driver_probe_all() ──▶ driver->probe(dev)
-                              设备就绪 (DEVICE_STATUS_PROBED)</pre>
-
-<p>更换硬件只需改 <code>board.dts.json</code> 中的引脚号，无需改 C 代码。</p>
-
-<!-- ============================================================ -->
-<h2>6. DSP / EQ</h2>
-
-<p>多段均衡器，Biquad 级联，Q31 定点实现：</p>
-<pre>        b₀ + b₁·z⁻¹ + b₂·z⁻²
-H(z) = ──────────────────────
-        a₀ + a₁·z⁻¹ + a₂·z⁻²</pre>
+    <div class="sidebar">
+        <h3>📑 目录</h3>
+        <div class="toc">
+            <div class="toc">
 <ul>
-  <li>可配置 N 段 EQ（典型 5 段）</li>
-  <li>Q31 定点运算（RBJ 系数 → 定点转换）</li>
-  <li>音量平滑：一阶 IIR，Q15 系数 VOLUME_SMOOTH_ALPHA_Q15 = 33</li>
+<li><a href="#sound-dsp-project-esp32-s3">🏗️ Sound DSP Project (ESP32-S3)</a><ul>
+<li><a href="#1-esp32-s3">1. 🚀 核心选型：为什么是 ESP32-S3？</a></li>
+<li><a href="#2">2. 🧠 架构总览</a></li>
+<li><a href="#3">3. 🕹️ 物理按键映射</a></li>
+<li><a href="#4">4. 🧩 模块职责速查</a></li>
+<li><a href="#5">5. 📦 快速开始</a></li>
+<li><a href="#6">6. 📏 开发红线规范</a></li>
+<li><a href="#7">7. 📚 关键文档索引</a></li>
 </ul>
-
-<div style="margin-top:40px;padding-top:12px;border-top:1px solid var(--border);color:var(--text-dim);font-size:12px">
-更新日期：2026-05-23 &nbsp;|&nbsp; ESP32-S3 &nbsp;|&nbsp; LVGL 9.x &nbsp;|&nbsp; 240×240
+</li>
+</ul>
 </div>
 
-</div>
+        </div>
+    </div>
+    <div class="main-content">
+        <div class="content-wrapper">
+            <h1 id="sound-dsp-project-esp32-s3">🏗️ Sound DSP Project (ESP32-S3)</h1>
+<blockquote>
+<p>面向对象、高解耦的嵌入式音频数字信号处理与图形交互系统</p>
+</blockquote>
+<hr />
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="docs/architecture.md">📄 <strong>核心架构全景</strong> →</a></td>
+<td>分层架构、DeviceTree、Capability Engine、内存布局等详细设计</td>
+</tr>
+<tr>
+<td><a href="NOTICE.md">📋 <strong>踩坑全记录</strong> →</a></td>
+<td>架构演进史、疑难杂症根因分析与解决方案</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="1-esp32-s3">1. 🚀 核心选型：为什么是 ESP32-S3？</h2>
+<table>
+<thead>
+<tr>
+<th>核心需求</th>
+<th>ESP32-C3</th>
+<th>ESP32-C6</th>
+<th><strong>ESP32-S3</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PSRAM 扩展 (刚需)</td>
+<td>❌ 不支持</td>
+<td>❌ 不支持</td>
+<td>✅ Octal SPI 8MB</td>
+</tr>
+<tr>
+<td>Lottie 动画渲染 (160KB 缓冲)</td>
+<td>❌ SRAM 仅 400KB</td>
+<td>❌ SRAM 仅 512KB</td>
+<td>✅ PSRAM 充足分配</td>
+</tr>
+<tr>
+<td>240×240 圆屏 + LVGL 9.x</td>
+<td>⚠️ 单核性能勉强</td>
+<td>⚠️ 单核性能勉强</td>
+<td>✅ 双核 LX7 流畅驱动</td>
+</tr>
+<tr>
+<td>音视频高频并发实时性</td>
+<td>❌ 单核极易卡音</td>
+<td>❌ 单核极易卡音</td>
+<td>✅ UI 核 + 音频核</td>
+</tr>
+<tr>
+<td>高刷屏通信带宽</td>
+<td>❌ Quad SPI</td>
+<td>❌ Quad SPI</td>
+<td>✅ Octal SPI</td>
+</tr>
+<tr>
+<td>DSP 算法 / 音频算力</td>
+<td>❌ 标量运算</td>
+<td>❌ 标量运算</td>
+<td>✅ 向量指令集加速</td>
+</tr>
+<tr>
+<td>外设扩展能力</td>
+<td>❌ 无 USB-OTG</td>
+<td>❌ 无 USB-OTG</td>
+<td>✅ 原生 USB-OTG</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>架构断言</strong>：Lottie 复杂渲染对内存吞吐是海量的，C3/C6 无 PSRAM 直接出局。双核架构是实现 UI 渲染与音频解码物理隔离的唯一解。</p>
+</blockquote>
+<hr />
+<h2 id="2">2. 🧠 架构总览</h2>
+<p>系统采用 <strong>7 层单向依赖模型</strong>，从 HAL 到 App 严格分层：</p>
+<pre><code>app → system → service → capability → board → drivers → hal_if → ESP-IDF
+                ↓                                         ↑
+              media ──────────────────────────────────────┤
+              algorithm (纯 DSP, 无硬件依赖)               │
+              config                                       │
+              core (Lifecycle, EventBus) ──────────────────┘
+</code></pre>
+<p>👉 <a href="docs/architecture.md#-1-系统层级总览-system-hierarchy">详见架构文档 → 系统层级总览</a></p>
+<hr />
+<h2 id="3">3. 🕹️ 物理按键映射</h2>
+<table>
+<thead>
+<tr>
+<th>丝印</th>
+<th>GPIO</th>
+<th>交互语义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PREV</td>
+<td>17</td>
+<td>焦点上移 / 减小参数 / 页面左滑</td>
+</tr>
+<tr>
+<td>NEXT</td>
+<td>16</td>
+<td>焦点下移 / 增大参数 / 页面右滑</td>
+</tr>
+<tr>
+<td>ENTER</td>
+<td>3</td>
+<td>唤醒解锁 / 确认执行 / 状态切换</td>
+</tr>
+<tr>
+<td>ESC</td>
+<td>46</td>
+<td>取消操作 / 返回上一层级</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>⚠️ 已知局限</strong>：LVGL 9.5 <code>LV_INDEV_TYPE_KEYPAD</code> 在 Group 内会吞噬 PREV/NEXT 事件。当前通过 <code>KeyInput::process()</code> 直接拦截 GPIO 轮询绕过（详见 <a href="NOTICE.md">踩坑记录</a>）。</p>
+</blockquote>
+<hr />
+<h2 id="4">4. 🧩 模块职责速查</h2>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>职责</th>
+<th>依赖限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app/</code></td>
+<td>LVGL GUI (锁屏/菜单/播放器/设置/串口)</td>
+<td>service, system</td>
+</tr>
+<tr>
+<td><code>core/</code></td>
+<td>Lifecycle, EventBus 基础设施</td>
+<td><strong>零硬件依赖</strong></td>
+</tr>
+<tr>
+<td><code>system/</code></td>
+<td>SystemRuntime, TaskManager</td>
+<td>core</td>
+</tr>
+<tr>
+<td><code>service/</code></td>
+<td>业务逻辑 (audio/ui/cloud/input)</td>
+<td>capability, core</td>
+</tr>
+<tr>
+<td><code>media/</code></td>
+<td>MP3 解码 + I2S 输出管线</td>
+<td>board, hal_if</td>
+</tr>
+<tr>
+<td><code>capability/</code></td>
+<td>硬件能力门面 (render/audio/input/led engine)</td>
+<td>board, drivers</td>
+</tr>
+<tr>
+<td><code>board/</code></td>
+<td>DeviceTree 运行时 + VFS 核心</td>
+<td>drivers</td>
+</tr>
+<tr>
+<td><code>drivers/</code></td>
+<td>外设驱动 (ST7789/MAX98357A/WS2812/gpio_key/light_sensor)</td>
+<td>hal_if, osal</td>
+</tr>
+<tr>
+<td><code>hal_if/</code></td>
+<td>函数指针表 (ESP-IDF 隔离层)</td>
+<td><strong>纯接口</strong></td>
+</tr>
+<tr>
+<td><code>soc_port_esp32/</code></td>
+<td>ESP32 芯片平台实现</td>
+<td>hal_if, osal</td>
+</tr>
+<tr>
+<td><code>osal/</code></td>
+<td>OS 抽象层 (task/mutex/time/log)</td>
+<td><strong>纯接口</strong></td>
+</tr>
+<tr>
+<td><code>algorithm/</code></td>
+<td>DSP (EQ, Biquad 定点滤波)</td>
+<td><strong>纯计算</strong></td>
+</tr>
+<tr>
+<td><code>config/</code></td>
+<td>编译时开关 + 运行时配置</td>
+<td><strong>零依赖</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5">5. 📦 快速开始</h2>
+<pre><code class="language-bash"># 1. 设置 ESP-IDF 环境 (v5.5+)
+source $IDF_PATH/export.sh
+
+# 2. 构建
+idf.py build
+
+# 3. 烧录
+idf.py -p /dev/ttyACM0 flash
+
+# 4. (可选) 监视串口
+idf.py -p /dev/ttyACM0 monitor
+</code></pre>
+<blockquote>
+<p><strong>注意</strong>：ESP-IDF v5.5 在 MSYS2/Mingw 下会被拦截，请使用原生 cmd.exe 或 PowerShell 构建（详见 <a href="NOTICE.md#21-⚠️-esp-idf-v55-msys2mingw-不支持">踩坑记录</a>）。</p>
+</blockquote>
+<hr />
+<h2 id="6">6. 📏 开发红线规范</h2>
+<table>
+<thead>
+<tr>
+<th>原则</th>
+<th>要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>沟通先行</strong></td>
+<td>改核心逻辑或引入新抽象前，必须讨论确认</td>
+</tr>
+<tr>
+<td><strong>适度封装</strong></td>
+<td>三个相似行 &gt; 一个过早抽象。不设计未来需求</td>
+</tr>
+<tr>
+<td><strong>文档同步</strong></td>
+<td>踩坑必须写入 <code>NOTICE.md</code>，注明日期</td>
+</tr>
+<tr>
+<td><strong>C++ 极简</strong></td>
+<td>禁用 RTTI 与 try-catch。跨文件回调用静态函数或 C 指针</td>
+</tr>
+<tr>
+<td><strong>驱动扩展</strong></td>
+<td>2 步：丢入 <code>drivers/</code> + <code>DRIVER_REGISTER</code>；更新 Board 注册表</td>
+</tr>
+<tr>
+<td><strong>层级隔离</strong></td>
+<td>禁止下层调上层。drivers/ 不包含 UI/App/Service/LVGL 头文件</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7">7. 📚 关键文档索引</h2>
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th>位置</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>核心架构</td>
+<td><a href="docs/architecture.md">docs/architecture.md</a></td>
+<td>分层模型、DeviceTree、Capability Engine、内存布局、DSP 算法</td>
+</tr>
+<tr>
+<td>踩坑全记录</td>
+<td><a href="NOTICE.md">NOTICE.md</a></td>
+<td>架构演进史、重大 Bug 根因、链接器/MSYS2 踩坑、内存优化</td>
+</tr>
+<tr>
+<td>按键配置</td>
+<td><code>tools/kconfig-vscode/README.md</code></td>
+<td>VS Code Kconfig 集成</td>
+</tr>
+<tr>
+<td>DSP 算法</td>
+<td><code>components/algorithm/dsp/README.md</code></td>
+<td>EQ 滤波器系数说明</td>
+</tr>
+</tbody>
+</table>
+        </div>
+    </div>
 </body>
 </html>

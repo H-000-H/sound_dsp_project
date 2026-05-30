@@ -1,491 +1,487 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sound DSP — 踩坑全记录</title>
-<style>
-  :root {
-    --bg: #F5F0FF; --surface: #FFFFFF; --border: #D4C4F0;
-    --text: #3D2C5C; --text-dim: #7A6A9A; --accent: #7C4DFF;
-    --accent2: #B388FF; --green: #2E7D32; --blue: #5C6BC0;
-    --red: #D32F2F; --yellow: #F9A825; --orange: #E65100;
-    --purple: #7C4DFF; --pink: #C62828; --cyan: #4527A0;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-    background: var(--bg); color: var(--text); line-height: 1.6; padding: 30px 16px;
-  }
-  .container { max-width: 920px; margin: 0 auto; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound DSP - 踩坑与演进记录</title>
+    <style>
+        :root {
+            --bg-color: #f5f6f8;
+            --text-main: #24292e;
+            --text-light: #586069;
+            --sidebar-bg: #ffffff;
+            --content-bg: #ffffff;
+            --border-color: #e1e4e8;
+            --code-bg: #f6f8fa;
+            --link-color: #0366d6;
+            --blockquote-bg: #f0f4f8;
+            --blockquote-border: #c8d1db;
+            --table-header-bg: #f6f8fa;
+        }
 
-  h1 {
-    font-size: 28px; font-weight: 800; margin-bottom: 2px;
-    background: linear-gradient(135deg,#7C4DFF,#B388FF,#E040FB);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-  }
-  .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 28px; }
+        html {
+            scroll-behavior: smooth;
+        }
 
-  /* ===== Quick Nav ===== */
-  .quick-nav {
-    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 28px;
-  }
-  .quick-nav a {
-    padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
-    text-decoration: none; border: 1px solid var(--border); color: var(--text-dim);
-    transition: all .15s;
-  }
-  .quick-nav a:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            line-height: 1.6;
+            font-size: 16px;
+        }
 
-  /* ===== Timeline ===== */
-  .timeline { position: relative; padding-left: 28px; }
-  .timeline::before {
-    content: ""; position: absolute; left: 8px; top: 0; bottom: 0;
-    width: 2px; background: linear-gradient(to bottom,#7C4DFF,#B388FF,#E040FB,#5C6BC0,#D4C4F0);
-  }
-  .entry {
-    position: relative; margin-bottom: 24px; padding: 16px 20px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 14px; transition: border-color .2s;
-  }
-  .entry:hover { border-color: var(--accent); }
-  .entry::before {
-    content: ""; position: absolute; left: -22px; top: 20px;
-    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
-    border: 2px solid var(--bg);
-  }
-  .entry-date { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: 1px; margin-bottom: 4px; }
-  .entry-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+        .sidebar {
+            width: 280px;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            padding: 24px 16px;
+            box-sizing: border-box;
+            z-index: 100;
+        }
 
-  .tag {
-    display: inline-block; font-size: 10px; font-weight: 700;
-    padding: 1px 8px; border-radius: 12px; margin-right: 3px; letter-spacing: .3px;
-  }
-  .tag-sys { background: rgba(230,81,0,0.06); color: var(--orange); }
-  .tag-fix { background: rgba(46,125,50,0.06); color: var(--green); }
-  .tag-serial { background: rgba(46,125,50,0.06); color: var(--green); }
-  .tag-bug { background: rgba(211,47,47,0.06); color: var(--red); }
-  .tag-dram { background: rgba(249,168,37,0.08); color: var(--yellow); }
-  .tag-keypad { background: rgba(124,77,255,0.05); color: var(--accent2); }
-  .tag-wifi { background: rgba(124,77,255,0.08); color: var(--purple); }
-  .tag-music { background: rgba(198,40,40,0.06); color: var(--pink); }
-  .tag-arch { background: rgba(69,39,160,0.06); color: var(--cyan); }
-  .tag-theme { background: rgba(0,122,255,0.06); color: var(--blue); }
-  .tag-dt { background: rgba(124,77,255,0.08); color: var(--purple); }
+        .sidebar h3 {
+            margin-top: 0;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 1.1em;
+            color: var(--text-main);
+        }
 
-  /* ===== Pitfall Cards ===== */
-  .pits-grid { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
-  .pit {
-    background: rgba(249,168,37,0.03); border: 1px solid rgba(249,168,37,0.12);
-    border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.5;
-  }
-  .pit strong { color: var(--yellow); }
-  .pit code {
-    background: rgba(124,77,255,0.05); padding: 0 5px; border-radius: 4px;
-    font-size: 12px; color: var(--cyan); font-family: "SF Mono","Fira Code","Consolas",monospace;
-  }
-  .pit .file {
-    color: var(--blue); font-family: "SF Mono","Fira Code","Consolas",monospace; font-size: 11px;
-  }
-  .pit .sln { display: block; margin-top: 4px; color: var(--green); font-weight: 600; }
+        .toc ul {
+            list-style: none;
+            padding-left: 16px;
+            margin: 0;
+        }
 
-  /* ===== Section ===== */
-  .section-title {
-    font-size: 18px; font-weight: 700; margin: 32px 0 14px;
-    padding-bottom: 6px; border-bottom: 1px solid var(--border); color: var(--accent);
-  }
+        .toc > ul {
+            padding-left: 0;
+        }
 
-  /* ===== Table ===== */
-  .tbl {
-    width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0;
-    border-radius: 10px; overflow: hidden;
-  }
-  .tbl th {
-    text-align: left; padding: 7px 10px; background: rgba(124,77,255,0.04);
-    border-bottom: 1px solid var(--border); color: var(--text-dim);
-    font-weight: 700; font-size: 11px; letter-spacing: .5px;
-  }
-  .tbl td { padding: 6px 10px; border-bottom: 1px solid rgba(47,32,79,0.08); color: var(--text-dim); }
-  .tbl td:first-child { color: var(--blue); font-family: "SF Mono","Fira Code","Consolas",monospace; font-size: 11px; }
-  .tbl tr:last-child td { border-bottom: none; }
+        .toc li {
+            margin: 6px 0;
+        }
 
-  .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 0 7px; border-radius: 8px; }
-  .badge-done { background: rgba(46,125,50,0.06); color: var(--green); }
-  .badge-wip { background: rgba(230,81,0,0.06); color: var(--orange); }
-  .badge-ko { background: rgba(211,47,47,0.06); color: var(--red); }
+        .toc a {
+            text-decoration: none;
+            color: var(--text-light);
+            font-size: 14px;
+            display: block;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
 
-  ul { padding-left: 16px; margin-top: 4px; }
-  ul li { margin-bottom: 4px; color: var(--text-dim); font-size: 13px; }
-  ul li strong { color: var(--text); }
+        .toc a:hover {
+            background-color: var(--code-bg);
+            color: var(--link-color);
+            font-weight: 500;
+        }
 
-  /* 架构图 */
-  .arch-pre {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px 14px; font-size: 11px; line-height: 1.5; overflow-x: auto; margin: 8px 0;
-    font-family: "SF Mono","Fira Code","Consolas",monospace;
-  }
+        .main-content {
+            margin-left: 280px;
+            flex: 1;
+            padding: 40px;
+            display: flex;
+            justify-content: center;
+        }
 
-  @media (max-width: 600px) {
-    body { padding: 12px 10px; }
-    .entry { padding: 12px 14px; }
-    h1 { font-size: 22px; }
-  }
-</style>
+        .content-wrapper {
+            background: var(--content-bg);
+            padding: 50px 60px;
+            max-width: 900px;
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            box-sizing: border-box;
+        }
+
+        h1, h2, h3, h4, h5 {
+            color: var(--text-main);
+            font-weight: 600;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+
+        h1 {
+            font-size: 2.2em;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        h2 {
+            font-size: 1.7em;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+            margin-top: 2em;
+        }
+
+        h3 { font-size: 1.3em; }
+        p { margin-bottom: 16px; }
+
+        pre {
+            background-color: var(--code-bg);
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            border: 1px solid var(--border-color);
+        }
+
+        code {
+            background-color: var(--code-bg);
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            color: #cb2431;
+        }
+
+        pre code {
+            color: inherit;
+            background: transparent;
+            padding: 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            border: 1px solid var(--border-color);
+            padding: 10px 16px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--table-header-bg);
+            font-weight: 600;
+        }
+
+        blockquote {
+            border-left: 4px solid var(--blockquote-border);
+            margin: 0 0 20px 0;
+            padding: 15px 20px;
+            background-color: var(--blockquote-bg);
+            color: #444d56;
+            border-radius: 0 6px 6px 0;
+        }
+
+        blockquote p:last-child { margin-bottom: 0; }
+        img { max-width: 100%; height: auto; border-radius: 6px; }
+
+        hr {
+            height: 1px;
+            background-color: var(--border-color);
+            border: none;
+            margin: 40px 0;
+        }
+    </style>
 </head>
 <body>
-<div class="container">
-
-<h1>✦ Sound DSP — 踩坑全记录</h1>
-<p class="subtitle">ESP32-S3 · LVGL 9.5 · 240×240 · 16 个已解决坑 + 架构重建</p>
-
-<div class="quick-nav">
-  <a href="#pits">💀 14 坑</a>
-  <a href="#timeline">📅 时间线</a>
-  <a href="#arch">🏗 架构重建</a>
-  <a href="#keypad">🔑 按键吞噬</a>
-  <a href="#config">⚙ 配置</a>
-  <a href="#todo">📋 待办</a>
+    <div class="sidebar">
+        <h3>📑 目录</h3>
+        <div class="toc">
+            <div class="toc">
+<ul>
+<li><a href="#sound-dsp">📓 Sound DSP — 核心架构演进与踩坑全记录</a><ul>
+<li><a href="#_1">📑 快速索引</a></li>
+<li><a href="#1">🎨 1. 浅色/深色双轨主题系统</a></li>
+<li><a href="#2-lvgl">🐛 2. LVGL 帧缓冲内存分配修复 (花屏/卡死)</a></li>
+<li><a href="#3">♻️ 3. 串口环形缓冲区标准库替换</a></li>
+<li><a href="#4">🧹 4. 全局括号风格规范化</a></li>
+<li><a href="#5-ui">💅 5. UI 细节精调微操作</a></li>
+</ul>
+</li>
+<li><a href="#_2">🏛️ 历史架构变更 (第一阶段：基础重构与优化)</a><ul>
+<li><a href="#7">7. 凭据硬编码外移脱敏</a></li>
+<li><a href="#8-spi-dma">8. SPI DMA 缓冲静态化</a></li>
+<li><a href="#9-lvgl">9. 按键模块重构 + LVGL 集成</a></li>
+<li><a href="#10-wifi">10. WiFi 事件驱动改造</a></li>
+<li><a href="#11-bsp">11. BSP 层接口绝对规范化</a></li>
+<li><a href="#12">12. 架构依赖边界收敛</a></li>
+<li><a href="#13-diram-bss-88-31">13. 极致内存优化：DIRAM .bss 占用 88% → 31%</a></li>
+</ul>
+</li>
+<li><a href="#linux">🏗️ 第二阶段：Linux 驱动模型与组件解耦</a><ul>
+<li><a href="#16-devicetree">16. 架构重建：DeviceTree + 驱动全解耦</a></li>
+<li><a href="#17-media-capability">17. 边界划定：Media层 + Capability隔离</a></li>
+</ul>
+</li>
+<li><a href="#_3">🐛 第三阶段：疑难杂症与编译链踩坑</a><ul>
+<li><a href="#18-pc">18. [未解决] PC 关闭串口时系统自动重启</a></li>
+<li><a href="#19-probe">19. ⚠️ 链接器大坑：纯 probe 表驱动的符号被吞噬</a></li>
+<li><a href="#20-app-state-machine-guard">🤖 20. App 层状态机守卫 (State Machine Guard)</a></li>
+<li><a href="#21-esp-idf-v55-msys2">⚠️ 21. ESP-IDF v5.5 拦截 MSYS2 构建</a></li>
+</ul>
+</li>
+<li><a href="#_4">🚀 第四阶段：工业级/车规级底层改造</a><ul>
+<li><a href="#22-hw_hal-linux-platform-driver">⚙️ 22. hw_hal 全量 Linux Platform Driver 化</a></li>
+<li><a href="#23-osmcu">🧩 23. OS/MCU 完全解耦 (三层物理抽象)</a></li>
+<li><a href="#24-linux-kernel-goto">🧹 24. 引入 Linux Kernel 风格 Goto 清理流</a></li>
+<li><a href="#25-ws2812-platform-data">💡 25. WS2812 物理剥离与 Platform Data 注入</a></li>
+<li><a href="#26-posix-error-codes">🔢 26. 全局负数错误码 (POSIX Error Codes) 统配</a></li>
+<li><a href="#27-spi">🔒 27. SPI 父设备总线锁 (多步事务原子性)</a></li>
+<li><a href="#28-the-final-touch">✅ 28. 扫清最后的架构瑕疵 (The Final Touch)</a></li>
+</ul>
+</li>
+</ul>
 </div>
 
-<!-- ============================================================ -->
-<!-- 💀 14 坑速查 -->
-<!-- ============================================================ -->
-<h2 class="section-title" id="pits">💀 14 个坑 · 速查</h2>
-
-<div class="pits-grid">
-
-<div class="pit">
-  <strong>1. WDT 修改后必须 fullclean</strong> — 改 <span class="file">sdkconfig</span> 禁用 WDT 后增量 build 仍编译旧代码。<br>
-  <span class="sln">✅ <code>idf.py fullclean</code>（或删 build/ 目录）后重编。reconfigure 不够。</span>
-</div>
-
-<div class="pit">
-  <strong>2. LVGL 9.5 group 吞噬 PREV/NEXT</strong> — KEYPAD indev 下 PREV/NEXT 被 group 焦点管理消耗。<span class="sln">✅ GPIO 轮询绕过：<code>lv_timer</code> 定时读 <code>get_pressed_gpio()</code> 独立处理。</span>
-</div>
-
-<div class="pit">
-  <strong>3. WDT 条件编译分多层</strong> — <code>CONFIG_ESP_TASK_WDT_EN</code>（主开关）、<code>_INIT</code>（启动初始化）、<code>BOOTLOADER_WDT</code>。须全部设为 not set。
-</div>
-
-<div class="pit">
-  <strong>4. lv_lottie.h 强制要求 ThorVG</strong> — <code>lv_conf_internal.h</code> 默认 <code>LV_USE_LOTTIE=1</code> 但 Kconfig 注释掉。<span class="sln">✅ 顶层 CMakeLists.txt 加 <code>-DLV_USE_LOTTIE=0</code>，源码用 <code>#if LV_USE_LOTTIE</code> 包裹。</span>
-</div>
-
-<div class="pit">
-  <strong>5. PSRAM Quad vs Octal 模式不匹配</strong> — 硬件 Octal 但默认 Quad 导致 <code>PSRAM chip not connected</code> 反复重启。<span class="sln">✅ sdkconfig 设 <code>SPIRAM_MODE_OCT=y</code>。</span>
-</div>
-
-<div class="pit">
-  <strong>6. 显示缓冲区放 DRAM 导致内存爆</strong> — 56KB 缓冲区默认 <code>MALLOC_CAP_DMA</code> 占满 DRAM。<span class="sln">✅ 非 LVGL 缓冲区（串口 ring buffer 等）用 <code>MALLOC_CAP_SPIRAM</code>。但 LVGL 绘制缓冲区例外（见第 14 坑）。</span>
-</div>
-
-<div class="pit">
-  <strong>7. friend + static 重复声明</strong> — <span class="file">music_app.hpp</span> 同时有 <code>friend</code> 和 <code>static</code> 声明同一函数。<span class="sln">✅ 移除 static。</span>
-</div>
-
-<div class="pit">
-  <strong>8. 全局变量重复定义</strong> — <span class="file">music_impl.cpp</span> 重复定义 <code>g_song_list</code>（已存在于 <span class="file">song_list.cpp</span>）。<span class="sln">✅ 删重复。</span>
-</div>
-
-<div class="pit">
-  <strong>9. 串口换行后颜色丢失</strong> — <code>buf[0]=='I' && buf[1]==' '</code> 条件太严格。<span class="sln">✅ 改用 <code>buf[0]=='I'</code> 单字符判断。</span>
-</div>
-
-<div class="pit">
-  <strong>10. WiFi 断连后无法重连</strong> — 只调 <code>disconnect()</code> 不够。<span class="sln">✅ 超时后 <code>wifi->stop()</code> 完全停止驱动，重连前 <code>start()</code>。</span>
-</div>
-
-<div class="pit">
-  <strong>11. LVGL 堆 32KB → 爆死锁</strong> — draw layer buffer 耗尽。<span class="sln">✅ <code>LV_MEM_SIZE</code> 增大到 128KB。</span>
-</div>
-
-<div class="pit">
-  <strong>12. 高帧率 + WDT = 更容易触发</strong> — 帧率越高 timer 回调越频繁，阻塞时 WDT 更快超时。<span class="sln">✅ 本项目禁用 WDT（非工业场景不需要）。</span>
-</div>
-
-<div class="pit">
-  <strong>13. ST7789 7 引脚无 CS — 必须 SPI Mode 3</strong> — 该模组没有独立 CS 引脚（<code>spics_io_num = -1</code>），DC 代替命令/数据区分。SPI 必须设为 <strong>Mode 3</strong>（CPOL=1, CPHA=1），否则 ST7789 无法正确采样 SCLK 边沿导致花屏或不显示。<span class="sln">✅ <span class="file">st7789_driver.c</span> <code>dev_cfg.mode = 0</code>（SPI Mode 0/3 均可），CS=-1 表示无片选。</span>
-</div>
-
-<div class="pit">
-  <strong>14. LVGL 帧缓冲放 PSRAM → WiFi 重连时花屏/卡死</strong> — ESP32-S3 PSRAM 通过 CPU cache 访问，WiFi <code>bcn_timeout</code> 触发重连 → flash/NVS 操作 → cache 禁用 → PSRAM 数据损坏。<span class="sln">✅ <span class="file">lvgl_main.cpp</span> 新增 <code>lvgl_alloc_buf()</code>，LVGL 绘制缓冲区优先从内部 RAM（<code>MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA</code>）分配，仅在 <code>USE_LVGL_PRAM=1</code> 时用 PSRAM。</span>
-</div>
-
-</div>
-
-<!-- ============================================================ -->
-<!-- 📅 时间线 -->
-<!-- ============================================================ -->
-<h2 class="section-title" id="timeline">📅 时间线</h2>
-<div class="timeline">
-
-<!-- v4.0 -->
-<div class="entry">
-  <div class="entry-date">2026-05-23 · v4.0</div>
-  <div class="entry-title">架构重建：Linux Driver Model + DeviceTree + 组件解耦</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-arch">架构</span>
-    <span class="tag tag-dt">DeviceTree</span>
-    <span class="tag tag-fix">重构</span>
-  </p>
-  <ul>
-    <li><strong>🏗 JSON DeviceTree</strong>：<code>board.dts.json</code> 统一硬件描述，改引脚无需改 C 代码</li>
-    <li><strong>🔌 Linux Driver Model</strong>：DRIVER_REGISTER 宏 + probe/remove 引擎，支持 compatible 匹配和 parent 依赖递归</li>
-    <li><strong>🧱 HAL 隔离层</strong>：<code>components/hal/</code> 函数指针表，驱动不直接调 ESP-IDF</li>
-    <li><strong>🧩 middleware 拆分</strong>：→ core/ + system/ + service/input/，消除循环依赖</li>
-    <li><strong>🛡 Lifecycle 状态机</strong>：can_transit() 守卫，防非法状态转换</li>
-    <li><strong>🧹 DSP 接口净化</strong>：EQ.h 全局变量移入 EQ.c</li>
-  </ul>
-</div>
-
-<!-- v3.0 -->
-<div class="entry">
-  <div class="entry-date">2026-05-15 · v3.0</div>
-  <div class="entry-title">浅色/深色主题 · 花屏修复 · 串口 FIFO 重构</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-theme">主题</span>
-    <span class="tag tag-fix">花屏</span>
-    <span class="tag tag-arch">重构</span>
-  </p>
-  <ul>
-    <li><strong>🎨 浅色/深色主题系统</strong>：<code>theme.hpp/cpp</code> 10 个颜色 getter，6 个 UI 文件替换硬编码颜色</li>
-    <li><strong>⚙ 设置页「外观」行</strong>：toggle 切换深色/浅色，所有 app 跟随</li>
-    <li><strong>🛡 LVGL 帧缓冲内存修复</strong>：<code>lvgl_alloc_buf()</code> 优先内部 RAM，避免 PSRAM cache 失效花屏</li>
-    <li><strong>🔁 串口 FIFO 替换</strong>：自定义 ring buffer → <code>buffer.h</code> FIFO</li>
-    <li><strong>📐 括号风格统一</strong>：全项目换行大括号</li>
-  </ul>
-</div>
-
-<!-- v2.7 -->
-<div class="entry">
-  <div class="entry-date">2026-05-14 · v2.7</div>
-  <div class="entry-title">WDT 禁用 · 颜色修正 · 帧率优化 · 12 坑总结</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-fix">WDT</span>
-    <span class="tag tag-serial">颜色</span>
-    <span class="tag tag-sys">帧率</span>
-  </p>
-  <ul>
-    <li><strong>⏱ WDT 完全禁用</strong>：sdkconfig 清除所有 WDT 配置 + 源码移除所有 <code>esp_task_wdt_add/reset</code> 调用</li>
-    <li><strong>🎨 颜色规则</strong>：<code>I</code>→绿 <code>#00FF41</code>，<code>W</code>→黄 <code>#FFD700</code>，<code>E</code>→红 <code>#FF3B6B</code>，其他→蓝 <code>#59D0FF</code></li>
-    <li><strong>⚡ 帧率提升</strong>：<code>vTaskDelay(5)</code> → <code>vTaskDelay(2)</code>，~60fps</li>
-  </ul>
-</div>
-
-<!-- v2.5 -->
-<div class="entry">
-  <div class="entry-date">2026-05-14 · v2.5</div>
-  <div class="entry-title">按键统一修复 · GPIO 轮询模式</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-keypad">按键</span>
-    <span class="tag tag-fix">修复</span>
-    <span class="tag tag-wifi">WiFi</span>
-  </p>
-  <ul>
-    <li>music_app / serial_app 全部改用上升沿 GPIO 轮询，避免 ENTER/ESC 双重触发</li>
-    <li>WiFi 超时后 <code>wifi->stop()</code> 代替仅 <code>disconnect()</code></li>
-    <li>串口每个 span 末尾加 <code>\n</code> 解决消息摞到一起</li>
-  </ul>
-</div>
-
-<!-- v2.3-2.4 -->
-<div class="entry">
-  <div class="entry-date">2026-05-14 · v2.3–2.4</div>
-  <div class="entry-title">编译修复 · DRAM 压缩 · LVGL group 确认</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-dram">DRAM</span>
-    <span class="tag tag-keypad">按键</span>
-    <span class="tag tag-arch">架构</span>
-  </p>
-  <ul>
-    <li>lv_lottie.h ThorVG → <code>-DLV_USE_LOTTIE=0</code></li>
-    <li><code>dram0.bss</code> 9344B → 5376B（↓43%），显存→PSRAM</li>
-    <li><strong>LVGL 9.5 group 吞噬确认</strong>：PREV/NEXT 被 group 消耗，不发送 LV_EVENT_KEY</li>
-    <li>music_nav_timer_cb friend+static 冲突解决，全局变量重复定义解决</li>
-  </ul>
-</div>
-
-<!-- v1.8 -->
-<div class="entry">
-  <div class="entry-date">2026-05-12 · v1.8</div>
-  <div class="entry-title">架构重构：BSP typed pointer · HAL 抽象 · 边界收敛</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-arch">架构</span>
-    <span class="tag tag-sys">BSP</span>
-  </p>
-  <ul>
-    <li><strong>BSP void* → typed pointer</strong>：6 个 BSP 模块函数签名改为 typed handle</li>
-    <li><strong>HAL 公共头文件脱敏</strong>：7 个 device_hal 头文件不再暴露 BSP/ESP-IDF 类型</li>
-    <li><strong>CMake 依赖收紧</strong>：main/service/device_hal 组件 REQUIRES 精简</li>
-    <li><strong>基类虚析构补全</strong>：ChannelDevice / DisplayDevice / LightDevice</li>
-    <li><strong>消除循环依赖</strong>：m_time.cpp 回调注入、max98357A 改为 GpioController</li>
-    <li><strong>死代码清除</strong>：删除 bsp/clock/ 和 bsp/Digital amplifier/（空实现），目录名规范化</li>
-    <li><strong>BSP 错误处理补全</strong>：bsp_mqtt / bsp_tcp 返回值检查</li>
-  </ul>
-</div>
-
-<!-- v1.5 -->
-<div class="entry">
-  <div class="entry-date">2026-05-11 · v1.5</div>
-  <div class="entry-title">内存优化 · 按键重构 · WiFi 事件驱动 · SPI DMA 静态化</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-dram">DRAM</span>
-    <span class="tag tag-fix">修复</span>
-    <span class="tag tag-wifi">WiFi</span>
-  </p>
-  <ul>
-    <li><strong>DIRAM .bss 88% → 31%</strong>：LVGL 内置 malloc → C 库 malloc，串口缓冲区加 EXT_RAM_BSS_ATTR（206KB → 9KB）</li>
-    <li><strong>按键模块重构</strong>：支持 8 GPIO、非阻塞 process()、时间戳消抖、LVGL 集成</li>
-    <li><strong>WiFi 事件驱动</strong>：vTaskDelay(3000) → EventGroup + IP_EVENT_STA_GOT_IP</li>
-    <li><strong>SPI DMA 缓冲静态化</strong>：lcd_fill_rect_impl / lcd_draw_bitmap_impl 复用预分配 DMA 缓冲，消除堆碎片</li>
-    <li><strong>凭据外移</strong>：WiFi/MQTT 账号密码从硬编码移到 KConfig.projbuild</li>
-    <li><strong>LLM API 配置</strong>：DeepSeek 配置项（CONFIG_LLM_API_ENABLE）</li>
-  </ul>
-</div>
-
-<!-- v2.1-2.2 -->
-<div class="entry">
-  <div class="entry-date">2026-05-13 · v2.1–2.2</div>
-  <div class="entry-title">三层导航 · 串口终端 · 音乐播放器 · WiFi/MQTT 重构</div>
-  <p style="margin-bottom:6px">
-    <span class="tag tag-arch">架构</span>
-    <span class="tag tag-serial">串口</span>
-    <span class="tag tag-music">音乐</span>
-    <span class="tag tag-wifi">WiFi</span>
-  </p>
-  <ul>
-    <li>锁屏→卡片轮播→功能页 三层导航，3 卡循环，220ms ease-out</li>
-    <li>USB Serial/JTAG 直读 + <code>esp_log_set_vprintf()</code> 钩子 + 环形缓冲区 PSRAM</li>
-    <li>Spangroup 着色 + 长数据截断 + 音量同步</li>
-    <li>TLSF 堆 32KB→128KB（防死锁），字库 6→3755 汉字</li>
-    <li>PSRAM Octal 模式稳定工作（AP 0x0d, gen3, 64Mbit, 40MHz）</li>
-  </ul>
-</div>
-
-</div>
-
-<!-- ============================================================ -->
-<!-- 🏗 架构重建 -->
-<!-- ============================================================ -->
-<h2 class="section-title" id="arch">🏗 架构重建：Linux Driver Model + DeviceTree</h2>
-
-<h3>背景</h3>
-<p>原先硬件描述分散在 <code>config/config.hpp</code>（311 行引脚定义）、<code>board/</code> C 结构体和 <code>bsp/</code> 多处，更换硬件需改多处代码。引入 JSON mini DeviceTree + Linux Driver Model，实现改 <code>board.dts.json</code> 即可换硬件。</p>
-
-<h3>最终目录结构</h3>
-<div class="arch-pre">components/
-├── core/          基类 (Lifecycle, EventBus, 日志宏, 配置)
-├── board/         DeviceTree 核心 + Driver 引擎
-├── hal/           ESP-IDF 隔离层 (函数指针表)
-├── drivers/       硬件驱动 (自注册)
-├── algorithm/     DSP 算法 (EQ)
-├── system/        系统编排 (SystemRuntime, TaskManager)
-├── service/       业务服务 (audio/ui/cloud/input)
-│   └── input/     新增：按键输入模块
-├── app/           LVGL GUI
-└── config/        编译时开关</div>
-
-<h3>DeviceTree 工作流</h3>
-<div class="arch-pre">board.dts.json ──解析──▶ device_list
-        board_register_all_drivers() ◀─── DRIVER_REGISTER 宏
-           board_driver_probe_all() ──▶ driver->probe(dev)
-                           设备就绪 (DEVICE_STATUS_PROBED)</div>
-
-<h3>依赖图</h3>
-<div class="arch-pre">app → system → service → board → drivers → hal → ESP-IDF
-                ↓           ↑
-              core ─────────┘</div>
-
-<h3>核心变更</h3>
-<table class="tbl">
+        </div>
+    </div>
+    <div class="main-content">
+        <div class="content-wrapper">
+            <h1 id="sound-dsp">📓 Sound DSP — 核心架构演进与踩坑全记录</h1>
+<blockquote>
+<p><strong>版本记录与技术债务清理史</strong>
+本文档详尽记录了项目从基础原型向<strong>强实时、零内存碎片、极致解耦的工业级/车规级架构</strong>蜕变的全过程。</p>
+</blockquote>
+<h3 id="_1">📑 快速索引</h3>
+<table>
 <thead>
-  <tr><th>组件</th><th>动作</th><th>职责</th></tr>
+<tr>
+<th>阶段</th>
+<th>章节</th>
+</tr>
 </thead>
 <tbody>
-  <tr><td>core/</td><td><span class="badge badge-done">新建</span></td><td>Lifecycle、EventBus、日志宏、JSON 配置读取</td></tr>
-  <tr><td>board/</td><td><span class="badge badge-done">增强</span></td><td>DeviceTree 解析 + Driver 注册 + probe 引擎</td></tr>
-  <tr><td>hal/</td><td><span class="badge badge-done">新建</span></td><td>ESP-IDF 隔离层（gpio/spi/i2s/pwm/uart/rmt_led）</td></tr>
-  <tr><td>drivers/</td><td><span class="badge badge-done">新建</span></td><td>硬件驱动（st7789/max98357a/gpio_key/ws2812）</td></tr>
-  <tr><td>system/</td><td><span class="badge badge-done">增强</span></td><td>继承原 middleware，SystemRuntime/TaskManager</td></tr>
-  <tr><td>service/input/</td><td><span class="badge badge-done">新增</span></td><td>KeyInput 按键扫描模块</td></tr>
-  <tr><td>middleware/</td><td><span class="badge badge-ko">删除</span></td><td>拆分到 system/ + core/ + service/input/</td></tr>
+<tr>
+<td>🎨 UI/功能迭代</td>
+<td><a href="#-1-浅色深色双轨主题系统">1. 主题系统</a> · <a href="#-2-lvgl-帧缓冲内存分配修复-花屏卡死">2. LVGL 花屏修复</a> · <a href="#-3-串口环形缓冲区标准库替换">3. 串口 FIFO</a> · <a href="#-4-全局括号风格规范化">4. 代码风格</a> · <a href="#-5-ui-细节精调微操作">5. UI 精调</a></td>
+</tr>
+<tr>
+<td>🏛️ 第一阶段重构</td>
+<td><a href="#7-凭据硬编码外移脱敏">7. 凭据外移</a> · <a href="#8-spi-dma-缓冲静态化">8. SPI 静态化</a> · <a href="#9-按键模块重构--lvgl-集成">9. 按键重构</a> · <a href="#10-wifi-事件驱动改造">10. WiFi 事件驱动</a> · <a href="#11-bsp-层接口绝对规范化">11. BSP 规范化</a> · <a href="#12-架构依赖边界收敛">12. 依赖收敛</a> · <a href="#13-极致内存优化-diram-bss-占用-88--31">13. 内存优化</a></td>
+</tr>
+<tr>
+<td>🏗️ 第二阶段解耦</td>
+<td><a href="#16-架构重建devicetree--驱动全解耦">16. DeviceTree + Driver Model</a> · <a href="#17-边界划定media层--capability隔离">17. Media + Capability</a></td>
+</tr>
+<tr>
+<td>🐛 第三阶段踩坑</td>
+<td><a href="#18-未解决-pc-关闭串口时系统自动重启">18. 串口重启</a> · <a href="#19-链接器大坑纯-probe-表驱动的符号被吞噬">19. 链接器符号吞噬</a> · <a href="#20-app-层状态机守卫">20. 状态机</a> · <a href="#21-esp-idf-v55-拦截-msys2-构建">21. MSYS2</a></td>
+</tr>
+<tr>
+<td>🚀 第四阶段改造</td>
+<td><a href="#22-hw_hal-全量-linux-platform-driver-化">22. Platform Driver 化</a> · <a href="#23-osmcu-完全解耦-三层物理抽象">23. OS/MCU 解耦</a> · <a href="#24-引入-linux-kernel-风格-goto-清理流">24. Goto 清理</a> · <a href="#25-ws2812-物理剥离与-platform-data-注入">25. WS2812 剥离</a> · <a href="#26-全局负数错误码-posix-error-codes-统配">26. 错误码统配</a> · <a href="#27-spi-父设备总线锁-多步事务原子性">27. 总线锁</a> · <a href="#28-扫清最后的架构瑕疵-the-final-touch">28. 最终修复</a></td>
+</tr>
 </tbody>
 </table>
-
-<h3>Lifecycle 状态机</h3>
-<div class="arch-pre">Created → Initialized → Started ⇄ Suspended
-  ↑          ↓              ↓
-  └── Stopped ←─────────────┘
-  Any → Failed (不可恢复)</div>
-<p>所有 Service + SystemRuntime 继承 Lifecycle，<code>can_transit()</code> 在每个生命周期方法中检查转换合法性。</p>
-
-<h3>注意</h3>
+<hr />
+<h2 id="1">🎨 1. 浅色/深色双轨主题系统</h2>
 <ul>
-  <li><strong>board.dts.json</strong> 中 parent 必须在 child 之前出现（或 depends_on 指向已存在的设备）</li>
-  <li>新增驱动 → <code>components/drivers/</code> 下创建 → 加 DRIVER_REGISTER → <code>board_driver_list.c</code> 加一行</li>
-  <li>更换硬件只需改 board.dts.json 中的引脚号，不修改 C 代码</li>
+<li><strong>[新增]</strong> <code>core/inc/theme.hpp</code> + <code>core/src/theme.cpp</code></li>
+<li><strong>机制</strong>：全局 <code>AppTheme</code> 枚举（<code>THEME_DARK</code> / <code>THEME_LIGHT</code>），提供 <code>theme_set()</code> / <code>theme_get()</code> 接口。</li>
+<li><strong>调色板</strong>：封装 10 个语义化颜色 getter（如 <code>th_bg</code> / <code>th_card</code> / <code>th_text</code> / <code>th_accent</code> 等）。浅色采用柔和类 iOS 配色（<code>th_bg=0xE4E5E9</code>）。</li>
+<li><strong>替换</strong>：全量清理了 <code>music_app</code>, <code>card_menu</code>, <code>serial_app</code> 等模块中的硬编码颜色，共计修改近 <strong>90 处</strong>。</li>
 </ul>
-
-<!-- ============================================================ -->
-<!-- 🔑 按键系统 -->
-<!-- ============================================================ -->
-<h2 class="section-title" id="keypad">🔑 LVGL 9.5 group 吞噬详解</h2>
-
-<div class="pits-grid">
-<div class="pit">
-  <strong>核心问题</strong>：LV_INDEV_TYPE_KEYPAD 下，PREV/NEXT 被 group 内部焦点导航消耗，不会发送 <code>LV_EVENT_KEY</code>。ENTER/ESC 正常（group 不处理它们）。
-</div>
-<div class="pit">
-  <strong>当前影响</strong>：音乐播放器、串口调试、歌曲列表 → PREV/NEXT 无法切换焦点区。卡片菜单正常（GPIO 轮询独立驱动）。
-</div>
-<div class="pit">
-  <strong>方案一（推荐）</strong>：GPIO 轮询 — <code>lv_timer</code> 定时读 <code>KeyInput::get_pressed_gpio()</code>，独立于 group。<br>
-  <strong>方案二</strong>：<code>lv_group_set_editing(true)</code> — ENTER 进入编辑模式后 PREV/NEXT 由对象自身处理。
-</div>
-</div>
-
-<!-- ============================================================ -->
-<!-- ⚙ 配置参考 -->
-<!-- ============================================================ -->
-<h2 class="section-title" id="config">⚙ 系统配置参考</h2>
-
-<table class="tbl">
-<thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead>
+<blockquote>
+<p>[!NOTE] 
+<code>th_text_sec()</code> 深浅主题保持一致（0x8E8E93）；日志等级颜色（INFO/WARN/ERROR）及图像资源不随主题变化，以保障辨识度。</p>
+</blockquote>
+<h2 id="2-lvgl">🐛 2. LVGL 帧缓冲内存分配修复 (花屏/卡死)</h2>
+<ul>
+<li><strong>[文件]</strong> <code>core/src/lvgl_main.cpp</code></li>
+<li><strong>[修改]</strong> 新增 <code>lvgl_alloc_buf()</code>，强制优先从内部 RAM (<code>MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA</code>) 分配 LVGL 绘制缓冲区。仅当 <code>USE_LVGL_PRAM=1</code> 时才回退至 PSRAM。</li>
+<li><strong>[根因]</strong> ESP32-S3 的 PSRAM 通过 CPU Cache 访问。当 WiFi 触发 <code>bcn_timeout</code> 重连导致 Flash/NVS 操作时，Cache 会被短暂禁用，引发 PSRAM 帧数据损坏，最终导致屏幕花屏或系统卡死。</li>
+</ul>
+<h2 id="3">♻️ 3. 串口环形缓冲区标准库替换</h2>
+<ul>
+<li><strong>[文件]</strong> <code>serial_console.cpp</code>, <code>serial_console.hpp</code></li>
+<li><strong>[修改]</strong> 彻底废弃手写 Ring Buffer，改用 ESP-IDF 标准 <code>buffer.h</code> 中的 <code>FIFO_Type_Def</code> 及其生态函数（<code>fifo_init</code> / <code>fifo_push</code> / <code>fifo_pop</code>）。</li>
+<li><strong>[内存]</strong> 缓冲区内存仍强制从 PSRAM 分配（<code>MALLOC_CAP_SPIRAM</code>），防止挤占宝贵的 DRAM。</li>
+</ul>
+<h2 id="4">🧹 4. 全局括号风格规范化</h2>
+<ul>
+<li><strong>[重构]</strong> 遍历全项目文件，将所有控制语句（<code>if</code> / <code>for</code> / <code>while</code> / <code>switch</code>）的左括号由同行风格统一修正为<strong>换行大括号风格</strong>，提升工业级代码的视觉一致性。</li>
+</ul>
+<h2 id="5-ui">💅 5. UI 细节精调微操作</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">优化模块</th>
+<th style="text-align: left;">细节描述</th>
+</tr>
+</thead>
 <tbody>
-<tr><td>CONFIG_LV_MEM_SIZE</td><td>128 KB</td><td>LVGL TLSF 堆，32KB 不够会死锁</td></tr>
-<tr><td>CONFIG_LV_DRAW_THREAD_STACK_SIZE</td><td>≥ 32768</td><td>ThorVG 渲染线程栈</td></tr>
-<tr><td>CONFIG_SPIRAM_MODE_OCT</td><td>y</td><td>Octal PSRAM（AP 0x0d, gen3, 64Mbit）</td></tr>
-<tr><td>CONFIG_SPIRAM_SPEED</td><td>40M</td><td>PSRAM 频率</td></tr>
-<tr><td>CONFIG_SPIRAM_USE_CAPS_ALLOC</td><td>y</td><td>caps 分配器</td></tr>
-<tr><td>CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY</td><td>y</td><td>BSS 段可放 PSRAM</td></tr>
-<tr><td>lcd_stack_size</td><td>24 KB</td><td>LCD 任务栈</td></tr>
-<tr><td>USE_LVGL_PRAM</td><td>0</td><td>LVGL 帧缓冲优先内部 RAM（防 PSRAM cache 失效）</td></tr>
-<tr><td>USE_SINGE_BUFFER</td><td>1</td><td>LVGL 单缓冲模式（省内存）</td></tr>
-<tr><td>USE_LVGL_DMA</td><td>1</td><td>LCD DMA 传输</td></tr>
+<tr>
+<td style="text-align: left;"><strong>🎵 音乐碟片</strong></td>
+<td style="text-align: left;">背景固定为 <code>0x0E0F14</code>（深色唱片色），浅色模式下依然保留黑胶唱片质感。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>💻 串口终端</strong></td>
+<td style="text-align: left;">浅色模式背景：<code>0xF0F1F4</code>；深色模式背景：<code>0x08090C</code>。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>🎚️ 音量滑块</strong></td>
+<td style="text-align: left;">轨道固定纯白色 (<code>0xFFFFFF</code>) 配合半透明深色底，确保任意主题下的极佳对比度。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>🖱️ 长按防抖</strong></td>
+<td style="text-align: left;">引入 <code>m_pending_enter</code> 标志位，彻底解决歌单长按 ENTER 导致的连发抖动问题。</td>
+</tr>
 </tbody>
 </table>
-
-<!-- ============================================================ -->
-<!-- 📋 待办 -->
-<!-- ============================================================ -->
-<h2 class="section-title" id="todo">📋 待办</h2>
-
-<div class="pits-grid">
-<div class="pit" style="border-left: 3px solid var(--red);">
-  <strong>🔴 未解决</strong>
-  <ul>
-    <li><strong>PC 关闭串口导致系统重启</strong> — USB Serial/JTAG 外设在 host 断连后，访问 TX FIFO 寄存器可能使总线挂起。已尝试中断屏蔽 + 写入前检测，仍未彻底解决。</li>
-  </ul>
-</div>
-<div class="pit" style="border-left: 3px solid var(--orange);">
-  <strong>🟠 待办</strong>
-  <ul>
-    <li>蓝牙图标接入</li>
-    <li>HEX 模式完善</li>
-  </ul>
-</div>
-</div>
-
-</div>
+<hr />
+<h1 id="_2">🏛️ 历史架构变更 (第一阶段：基础重构与优化)</h1>
+<h2 id="7">7. 凭据硬编码外移脱敏</h2>
+<ul>
+<li><strong>[问题]</strong> WiFi/MQTT 账号密码硬编码，存在安全与移植隐患。</li>
+<li><strong>[修改]</strong> 引入 <code>main/Kconfig.projbuild</code>，将凭据纳入 ESP-IDF <code>menuconfig</code> 标准管理体系。运行时配置优先，空值则回退至 KConfig 默认值。</li>
+</ul>
+<h2 id="8-spi-dma">8. SPI DMA 缓冲静态化</h2>
+<ul>
+<li><strong>[修改]</strong> 修复了 <code>st7789.c</code> 中每次刷图都 <code>malloc</code>/<code>free</code> 4KB DMA 缓冲导致的严重堆碎片问题。改为在 <code>bsp_lcd_init()</code> 中<strong>一次性静态分配</strong>，全局复用。</li>
+</ul>
+<h2 id="9-lvgl">9. 按键模块重构 + LVGL 集成</h2>
+<ul>
+<li><strong>[修改]</strong> <code>Button</code> 类全面重构：支持最多 8 组 GPIO，采用非阻塞 <code>process()</code> + 时间戳硬件级消抖。LVGL 输入回调直接挂载 <code>Button::get_pressed_gpio()</code>。</li>
+</ul>
+<h2 id="10-wifi">10. WiFi 事件驱动改造</h2>
+<ul>
+<li><strong>[修改]</strong> 废弃 <code>vTaskDelay</code> 的死等模式，全面拥抱 <code>EventGroup</code> + <code>IP_EVENT_STA_GOT_IP</code> 事件驱动状态机。</li>
+</ul>
+<h2 id="11-bsp">11. BSP 层接口绝对规范化</h2>
+<ul>
+<li><strong>签名净化</strong>：全面使用 typed pointer (如 <code>bsp_spi_handle*</code>) 替代 <code>void*</code>。</li>
+<li><strong>中断隔离</strong>：驱动不再直接调用 BSP，改为通过 <code>GpioController</code> 的 <code>install_isr_service</code> 进行统一下发。</li>
+<li><strong>死代码清理</strong>：移除空实现的 clock / amplifier 目录，净化工程树。</li>
+</ul>
+<h2 id="12">12. 架构依赖边界收敛</h2>
+<ul>
+<li><strong>CMake 依赖</strong>：严格划分 <code>REQUIRES</code> 与 <code>PRIV_REQUIRES</code>，斩断跨层依赖。</li>
+<li><strong>头文件脱敏</strong>：<code>device_hal</code> 下的 7 个核心头文件彻底屏蔽底层 ESP-IDF 类型暴露。</li>
+<li><strong>内存泄漏修补</strong>：补全 <code>bsp_tcp.c</code> / <code>bsp_mqtt.c</code> 异常分支的句柄释放闭环。</li>
+</ul>
+<h2 id="13-diram-bss-88-31">13. 极致内存优化：DIRAM .bss 占用 88% → 31%</h2>
+<ul>
+<li><strong>[问题]</strong> DIRAM 几乎爆满，LVGL 内存池与串口缓冲是罪魁祸首。</li>
+<li><strong>[修改]</strong> 1. LVGL 切至 C 标准库 malloc，配合 <code>CONFIG_SPIRAM_USE_MALLOC=y</code> 自动重定向至 PSRAM。</li>
+<li>串口大缓存强制打上 <code>EXT_RAM_BSS_ATTR</code> 标签丢入外部 RAM。</li>
+<li><strong>[结果]</strong> <code>.bss</code> 占用从 <strong>206 KB 骤降至 9 KB</strong>！</li>
+</ul>
+<hr />
+<h1 id="linux">🏗️ 第二阶段：Linux 驱动模型与组件解耦</h1>
+<h2 id="16-devicetree">16. 架构重建：DeviceTree + 驱动全解耦</h2>
+<ul>
+<li><strong>[背景]</strong> 彻底告别修改 C 代码换引脚的刀耕火种时代，引入 <strong>JSON 格式 DeviceTree</strong> 与 <strong>Linux Platform Driver Model</strong>。</li>
+<li><strong>[核心机制]</strong> * 驱动层使用 <code>DRIVER_REGISTER</code> 宏实现自注册（包含 compatible / probe / remove）。</li>
+<li><code>board_driver_probe_all()</code> 引擎启动时遍历拓扑，按依赖链执行链式挂载。</li>
+<li><code>hal/</code> 层隔离 ESP-IDF 物理接口，上层外设驱动绝对平台无关。</li>
+<li><strong>[编译期 DTS 升级]</strong> 运行时 JSON 解析升级为由 <code>tools/dtc-lite.py</code> 驱动的<strong>编译期静态代码生成</strong>，实现零运行时内存开销。</li>
+</ul>
+<h2 id="17-media-capability">17. 边界划定：Media层 + Capability隔离</h2>
+<ul>
+<li><strong>[重构]</strong> * 新增 <code>media/</code> 层：收容 MP3 解码与缓冲逻辑，使其脱离纯算法层 (<code>algorithm/</code>)。</li>
+<li>新增 <code>capability/</code> 层：封锁 Service 层越级访问，强制通过设备树句柄 (<code>device_find</code>) 通信。</li>
+<li>解耦 <code>system/</code>：统一接管 <code>SystemRuntime::init</code>，收敛网络及底层启停权限。</li>
+</ul>
+<hr />
+<h1 id="_3">🐛 第三阶段：疑难杂症与编译链踩坑</h1>
+<h2 id="18-pc">18. [未解决] PC 关闭串口时系统自动重启</h2>
+<ul>
+<li><strong>[现象]</strong> USB Serial/JTAG 断连时引发硬件 Panic 甚至 WDT 重启。</li>
+<li><strong>[根因]</strong> TX FIFO 失去消费者，Host 断连状态无法通过寄存器可靠侦测。写入拥塞直接导致 CPU 挂起。</li>
+<li><strong>[现状]</strong> 尝试屏蔽中断、探测 <code>txfifo_writable</code> 均未彻底根治，暂定挂起态规避。</li>
+</ul>
+<h2 id="19-probe">19. ⚠️ 链接器大坑：纯 probe 表驱动的符号被吞噬</h2>
+<ul>
+<li><strong>[现象]</strong> 纯靠 <code>DRIVER_REGISTER</code> 注册的 <code>light_sensor</code> 驱动报 <code>undefined reference</code>，而其他四大驱动正常。</li>
+<li><strong>[根因]</strong> GNU <code>ld</code> 归档提取规则：由于 <code>board_probe.c.obj</code> 尚未链接，probe 表指针不足以触发静态库 <code>.a</code> 中目标文件的提取。其他驱动正常是因为在旧代码中存在隐式的直接函数调用。</li>
+<li><strong>[解法]</strong> 在 CMakeLists 中强制追加 <code>-u</code> (Undefined) 链接器标志，提前声明符号以拉取目标文件：
+  <code>cmake
+  target_link_options(${{COMPONENT_LIB}} INTERFACE "-u" "board_driver_probe_light_sensor")</code></li>
+</ul>
+<h2 id="20-app-state-machine-guard">🤖 20. App 层状态机守卫 (State Machine Guard)</h2>
+<ul>
+<li><strong>[修改]</strong> 引入 <code>MusicState</code> 与 <code>MenuState</code> 严格枚举。</li>
+<li><strong>[收益]</strong> 彻底封堵了异步 I/O (歌曲加载) 期间由于按键重入导致的状态崩溃，提供严格的生命周期守卫机制。</li>
+</ul>
+<h2 id="21-esp-idf-v55-msys2">⚠️ 21. ESP-IDF v5.5 拦截 MSYS2 构建</h2>
+<ul>
+<li><strong>[现象]</strong> <code>idf.py build</code> 打印警告后直接退出。</li>
+<li><strong>[根因]</strong> v5.5 源码写死拦截 <code>MSYSTEM</code> 环境变量。</li>
+<li><strong>[解法]</strong> 临时修改 <code>idf.py</code> 脚本注入 <code>main()</code>，或改用 Windows 原生 CMD 环境执行。</li>
+</ul>
+<hr />
+<h1 id="_4">🚀 第四阶段：工业级/车规级底层改造</h1>
+<h2 id="22-hw_hal-linux-platform-driver">⚙️ 22. hw_hal 全量 Linux Platform Driver 化</h2>
+<ul>
+<li><strong>[重构]</strong> 6 大物理外设 (GPIO/I2C/SPI/I2S/UART/RMT) 全部升级为带 probe()、remove() 与 fops 操作表的标准 Platform Driver。</li>
+<li><strong>[消费者]</strong> ST7789、MP3、Serial 层不再直接调 <code>hal_init</code>，全盘改写为 <code>device_write()</code> 与 <code>device_ioctl()</code> 标准系统调用。</li>
+</ul>
+<h2 id="23-osmcu">🧩 23. OS/MCU 完全解耦 (三层物理抽象)</h2>
+<ul>
+<li><strong>[动机]</strong> 斩断底层框架对 FreeRTOS 和 ESP-IDF 的强耦合，使其能够随时移植至 RT-Thread 或裸机。</li>
+<li><strong>[架构]</strong> <code>hw_hal</code> 被精准切割为三层：</li>
+<li><code>hal_if/</code>：纯虚接口，可移植到任意 C 编译器。</li>
+<li><code>osal/</code>：OS 抽象层，接管时钟、延迟、互斥锁与内存池。</li>
+<li><code>soc_port_esp32/</code>：特有芯片实现层。</li>
+<li><strong>[极客细节]</strong> GPIO 引入 <code>HAL_GPIO_FAST_PATH</code>，允许 ns 级时序操作绕过 VFS 函数指针表直接内联，兼顾解耦与极限性能。</li>
+</ul>
+<h2 id="24-linux-kernel-goto">🧹 24. 引入 Linux Kernel 风格 Goto 清理流</h2>
+<ul>
+<li><strong>[重构]</strong> 根除 15 个驱动函数中的 Inline Pool 释放乱象。</li>
+<li><strong>[规范]</strong> 统一采用 <code>goto err_xxx;</code> 标签。资源清理严格遵循反向析构栈原则（后分配的先释放），极大降低了内存泄漏的风险。</li>
+</ul>
+<h2 id="25-ws2812-platform-data">💡 25. WS2812 物理剥离与 Platform Data 注入</h2>
+<ul>
+<li><strong>[重构]</strong> WS2812 驱动中彻底删除 <code>vfs_rmt.h</code>，改用标准 <code>device_write(parent, buf, 3)</code> 下发像素数据。</li>
+<li><strong>[内存]</strong> 驱动实现零开销，GRB 显存由 Board 级通过 <code>platform_data</code> 静态注入。</li>
+</ul>
+<h2 id="26-posix-error-codes">🔢 26. 全局负数错误码 (POSIX Error Codes) 统配</h2>
+<ul>
+<li><strong>[规范]</strong> 封杀所有粗糙的 <code>return -1;</code>，全量替换为 <code>VFS_ERR_INVAL</code> / <code>VFS_ERR_IO</code> / <code>VFS_ERR_NOMEM</code> / <code>VFS_ERR_NOSPC</code>。异常追溯能力达到 OS 级别。</li>
+</ul>
+<h2 id="27-spi">🔒 27. SPI 父设备总线锁 (多步事务原子性)</h2>
+<ul>
+<li><strong>[重构]</strong> 在 st7789 的核心刷图流中引入双层锁机制：
+  <code>c
+  device_lock(priv-&gt;spi_dev); // [锁定物理总线] 防止其他 SPI 从机打断
+  set_window(...) -&gt; write_cmd(...) -&gt; spi_write_chunked(...)
+  device_unlock(priv-&gt;spi_dev);</code></li>
+<li><strong>[收益]</strong> 从根源上扼杀了多任务高频读写复用总线导致的时序错乱花屏问题。</li>
+</ul>
+<h2 id="28-the-final-touch">✅ 28. 扫清最后的架构瑕疵 (The Final Touch)</h2>
+<table>
+<thead>
+<tr>
+<th>瑕疵</th>
+<th>修复</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>🛡️ ST7789 多实例安全</td>
+<td>一维 <code>line_buf</code> 升级为二维数组静态池，杜绝双屏显存覆写</td>
+</tr>
+<tr>
+<td>✂️ 背光层跨界</td>
+<td><code>pwm_bl</code> 从 ESP32 私有目录迁至通用 <code>drivers/display</code>，compatible 改为 <code>generic,pwm-backlight</code></td>
+</tr>
+<tr>
+<td>🔒 WS2812 裸奔</td>
+<td>补齐 <code>ws2812_ioctl</code> 缺失的 <code>device_lock/unlock</code>，保护纳秒级 RMT 时序</td>
+</tr>
+<tr>
+<td>💾 初始化序列</td>
+<td>定长结构体 → 扁平字节流解析，单命令参数不再受限，压缩 ROM 占用</td>
+</tr>
+</tbody>
+</table>
+        </div>
+    </div>
 </body>
 </html>

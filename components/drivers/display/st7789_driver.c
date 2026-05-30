@@ -1,6 +1,7 @@
 #include "st7789_driver.h"
 
 #include "driver.h"
+#include "VFS.h"
 #include "vfs_gpio.h"
 #include "vfs_pwm.h"
 #include "osal.h"
@@ -12,7 +13,7 @@ static const char* kTag = "st7789";
 /* ── BSS 静态池（禁止运行时动态分配） ── */
 #define ST7789_MAX_WIDTH     320
 #define ST7789_LINE_BUF_SIZE (ST7789_MAX_WIDTH * 2)
-static uint8_t s_st7789_line_buf[ST7789_LINE_BUF_SIZE];
+static uint8_t s_st7789_line_buf[ST7789_PRIV_POOL_SIZE][ST7789_LINE_BUF_SIZE];
 
 #define CMD_SWRESET    0x01
 #define CMD_SLPOUT     0x11
@@ -26,32 +27,26 @@ static uint8_t s_st7789_line_buf[ST7789_LINE_BUF_SIZE];
 
 #define ST7789_DEFAULT_SPI_CHUNK 4096U
 
-typedef struct
-{
-    uint8_t cmd;
-    uint8_t len;
-    uint8_t data[5];
-} st7789_init_cmd_t;
-
-static const st7789_init_cmd_t kInitSeq[] = {
-    { CMD_SWRESET, 0, {0} },
-    { 0xCB, 5, {0x39, 0x2C, 0x00, 0x34, 0x02} },
-    { 0xCF, 3, {0x00, 0xC1, 0x30} },
-    { 0xE8, 3, {0x85, 0x00, 0x78} },
-    { 0xEA, 2, {0x00, 0x00} },
-    { 0xED, 4, {0x64, 0x03, 0x12, 0x81} },
-    { 0xF7, 1, {0x20} },
-    { 0xC0, 1, {0x23} },
-    { 0xC1, 1, {0x10} },
-    { 0xC5, 2, {0x3E, 0x28} },
-    { 0xC7, 1, {0x86} },
-    { CMD_COLMOD, 1, {0x55} },
-    { 0xB1, 2, {0x00, 0x13} },
-    { 0xB4, 1, {0x00} },
-    { 0xB6, 3, {0x08, 0x82, 0x27} },
-    { CMD_INVON, 0, {0} },
-    { 0xC2, 1, {0xA7} },
-    { CMD_SLPOUT, 0, {0} },
+/* 扁平初始化序列: cmd, len, [data...] */
+static const uint8_t kInitSeq[] = {
+    CMD_SWRESET, 0,
+    0xCB, 5, 0x39, 0x2C, 0x00, 0x34, 0x02,
+    0xCF, 3, 0x00, 0xC1, 0x30,
+    0xE8, 3, 0x85, 0x00, 0x78,
+    0xEA, 2, 0x00, 0x00,
+    0xED, 4, 0x64, 0x03, 0x12, 0x81,
+    0xF7, 1, 0x20,
+    0xC0, 1, 0x23,
+    0xC1, 1, 0x10,
+    0xC5, 2, 0x3E, 0x28,
+    0xC7, 1, 0x86,
+    CMD_COLMOD, 1, 0x55,
+    0xB1, 2, 0x00, 0x13,
+    0xB4, 1, 0x00,
+    0xB6, 3, 0x08, 0x82, 0x27,
+    CMD_INVON, 0,
+    0xC2, 1, 0xA7,
+    CMD_SLPOUT, 0,
 };
 
 typedef struct
@@ -83,7 +78,7 @@ static uint8_t s_st7789_used[ST7789_PRIV_POOL_SIZE];
 
 static int spi_write_chunked(st7789_priv_t* priv, const uint8_t* data, size_t len)
 {
-    if (!priv || !priv->spi_dev || (!data && len > 0)) return -1;
+    if (!priv || !priv->spi_dev || (!data && len > 0)) return VFS_ERR_INVAL;
     size_t offset = 0;
     while (offset < len) {
         size_t chunk = len - offset;
@@ -118,12 +113,16 @@ static int write_data_byte(st7789_priv_t* priv, uint8_t data)
 
 static int send_init_seq(st7789_priv_t* priv)
 {
-    for (size_t i = 0; i < sizeof(kInitSeq) / sizeof(kInitSeq[0]); i++) {
-        int ret = write_cmd(priv, kInitSeq[i].cmd);
+    size_t i = 0;
+    while (i < sizeof(kInitSeq)) {
+        uint8_t cmd = kInitSeq[i++];
+        uint8_t len = kInitSeq[i++];
+        int ret = write_cmd(priv, cmd);
         if (ret != 0) return ret;
-        if (kInitSeq[i].len > 0) {
-            ret = write_data(priv, kInitSeq[i].data, kInitSeq[i].len);
+        if (len > 0) {
+            ret = write_data(priv, &kInitSeq[i], len);
             if (ret != 0) return ret;
+            i += len;
         }
     }
     gpio_level_arg_t level = { .pin = priv->gpio_dc.pin, .level = 1 };
@@ -139,7 +138,7 @@ static int rect_in_bounds(const st7789_priv_t* priv, int x, int y, int w, int h)
 
 static int clip_rect(const st7789_priv_t* priv, int* x, int* y, int* w, int* h)
 {
-    if (!priv || !x || !y || !w || !h || *w <= 0 || *h <= 0) return -1;
+    if (!priv || !x || !y || !w || !h || *w <= 0 || *h <= 0) return VFS_ERR_INVAL;
 
     if (*x < 0) {
         *w += *x;
@@ -149,10 +148,10 @@ static int clip_rect(const st7789_priv_t* priv, int* x, int* y, int* w, int* h)
         *h += *y;
         *y = 0;
     }
-    if (*x >= priv->width || *y >= priv->height || *w <= 0 || *h <= 0) return -1;
+    if (*x >= priv->width || *y >= priv->height || *w <= 0 || *h <= 0) return VFS_ERR_INVAL;
     if (*w > priv->width - *x) *w = priv->width - *x;
     if (*h > priv->height - *y) *h = priv->height - *y;
-    return (*w > 0 && *h > 0) ? 0 : -1;
+    return (*w > 0 && *h > 0) ? 0 : VFS_ERR_INVAL;
 }
 
 static int set_window(st7789_priv_t* priv, int x, int y, int w, int h)
@@ -184,46 +183,52 @@ static int st7789_probe(device_t* dev)
 {
     int dc_pin = -1, rst_pin = -1;
     int width = 0, height = 0, bl_active = 1;
+    int ret = 0;
+    st7789_priv_t* priv = NULL;
 
     if (device_get_prop_int(dev, "dc", &dc_pin) != 0 ||
         device_get_prop_int(dev, "width", &width) != 0 ||
         device_get_prop_int(dev, "height", &height) != 0 ||
         dc_pin < 0 || width <= 0 || height <= 0) {
         DRV_LOGE(kTag, "missing required display config");
-        return -1;
+        ret = VFS_ERR_INVAL;
+        goto err_pool;
     }
     device_get_prop_int(dev, "reset", &rst_pin);
     device_get_prop_int(dev, "bl_active_high", &bl_active);
 
-    st7789_priv_t* priv = NULL;
+    int pool_idx = -1;
     for (int i = 0; i < ST7789_PRIV_POOL_SIZE; i++) {
         if (!s_st7789_used[i]) {
             s_st7789_used[i] = 1;
+            pool_idx = i;
             priv = &s_st7789_pool[i];
             memset(priv, 0, sizeof(*priv));
             break;
         }
     }
-    if (!priv) return -1;
+    if (!priv) {
+        ret = VFS_ERR_NOMEM;
+        goto err_pool;
+    }
 
-    int ret = 0;
     priv->width = width;
     priv->height = height;
     priv->bl_pin = -1;
     priv->bl_active_high = bl_active;
     priv->spi_chunk = ST7789_DEFAULT_SPI_CHUNK;
-    priv->line_buf = s_st7789_line_buf;
+    priv->line_buf = s_st7789_line_buf[pool_idx];
     priv->line_buf_len = ST7789_LINE_BUF_SIZE;
 
     priv->spi_dev = device_get_parent(dev);
     if (!priv->spi_dev) {
         DRV_LOGE(kTag, "missing SPI parent");
-        ret = -1;
+        ret = VFS_ERR_IO;
         goto err_pool;
     }
     priv->gpio_dev = device_get_phandle_dev(dev, "gpio");
     if (!priv->gpio_dev) {
-        ret = -1;
+        ret = VFS_ERR_IO;
         goto err_pool;
     }
 
@@ -240,7 +245,7 @@ static int st7789_probe(device_t* dev)
     priv->gpio_dc.pin = dc_pin;
     priv->gpio_dc.mode = HAL_GPIO_MODE_OUTPUT;
     if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &priv->gpio_dc) != 0) {
-        ret = -1;
+        ret = VFS_ERR_IO;
         goto err_pool;
     }
 
@@ -248,7 +253,7 @@ static int st7789_probe(device_t* dev)
         priv->gpio_rst.pin = rst_pin;
         priv->gpio_rst.mode = HAL_GPIO_MODE_OUTPUT;
         if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &priv->gpio_rst) != 0) {
-            ret = -1;
+            ret = VFS_ERR_IO;
             goto err_pool;
         }
     }
@@ -256,7 +261,7 @@ static int st7789_probe(device_t* dev)
     if (!priv->bl_pwm_dev && priv->bl_pin >= 0) {
         hal_gpio_config_t bl_cfg = { .pin = priv->bl_pin, .mode = HAL_GPIO_MODE_OUTPUT };
         if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &bl_cfg) != 0) {
-            ret = -1;
+            ret = VFS_ERR_IO;
             goto err_pool;
         }
     }
@@ -324,7 +329,7 @@ static int st7789_init(device_t* dev)
 static int st7789_get_info(device_t* dev, st7789_info_t* info)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
-    if (!priv || !info) return -1;
+    if (!priv || !info) return VFS_ERR_INVAL;
     info->width = priv->width;
     info->height = priv->height;
     return 0;
@@ -333,63 +338,74 @@ static int st7789_get_info(device_t* dev, st7789_info_t* info)
 static int st7789_fill_rect(device_t* dev, int x, int y, int w, int h, uint16_t color)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
-    if (!priv) return -1;
+    if (!priv) return VFS_ERR_INVAL;
     if (clip_rect(priv, &x, &y, &w, &h) != 0) return 0;
-    if ((size_t)w * 2U > priv->line_buf_len) return -1;
+    if ((size_t)w * 2U > priv->line_buf_len) return VFS_ERR_NOSPC;
 
-    int ret = set_window(priv, x, y, w, h);
-    if (ret != 0) return ret;
-    ret = write_cmd(priv, CMD_RAMWR);
-    if (ret != 0) return ret;
-    gpio_level_arg_t dc_level = { .pin = priv->gpio_dc.pin, .level = 1 };
-    ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level);
+    int ret = device_lock(priv->spi_dev);
     if (ret != 0) return ret;
 
-    uint8_t hi = (uint8_t)(color >> 8);
-    uint8_t lo = (uint8_t)(color & 0xFF);
-    for (int i = 0; i < w; i++) {
-        priv->line_buf[i * 2] = hi;
-        priv->line_buf[i * 2 + 1] = lo;
+    ret = set_window(priv, x, y, w, h);
+    if (ret == 0) ret = write_cmd(priv, CMD_RAMWR);
+    if (ret == 0) {
+        gpio_level_arg_t dc_level = { .pin = priv->gpio_dc.pin, .level = 1 };
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level);
+    }
+    if (ret == 0) {
+        uint8_t hi = (uint8_t)(color >> 8);
+        uint8_t lo = (uint8_t)(color & 0xFF);
+        for (int i = 0; i < w; i++) {
+            priv->line_buf[i * 2] = hi;
+            priv->line_buf[i * 2 + 1] = lo;
+        }
+        size_t row_len = (size_t)w * 2U;
+        for (int row = 0; row < h; row++) {
+            ret = spi_write_chunked(priv, priv->line_buf, row_len);
+            if (ret != 0) break;
+        }
     }
 
-    size_t row_len = (size_t)w * 2U;
-    for (int row = 0; row < h; row++) {
-        ret = spi_write_chunked(priv, priv->line_buf, row_len);
-        if (ret != 0) return ret;
-    }
-    return 0;
+    device_unlock(priv->spi_dev);
+    return ret;
 }
 
 static int st7789_fill_screen(device_t* dev, uint16_t color)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
-    if (!priv) return -1;
+    if (!priv) return VFS_ERR_INVAL;
     return st7789_fill_rect(dev, 0, 0, priv->width, priv->height, color);
 }
 
 static int st7789_draw_bitmap(device_t* dev, int x, int y, int w, int h, const uint8_t* data)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
-    if (!priv || !data || !rect_in_bounds(priv, x, y, w, h)) return -1;
+    if (!priv || !data || !rect_in_bounds(priv, x, y, w, h)) return VFS_ERR_INVAL;
 
     size_t pixels = (size_t)w * (size_t)h;
-    if (h != 0 && pixels / (size_t)h != (size_t)w) return -1;
-    if (pixels > SIZE_MAX / 2U) return -1;
+    if (h != 0 && pixels / (size_t)h != (size_t)w) return VFS_ERR_INVAL;
+    if (pixels > SIZE_MAX / 2U) return VFS_ERR_NOSPC;
 
-    int ret = set_window(priv, x, y, w, h);
+    int ret = device_lock(priv->spi_dev);
     if (ret != 0) return ret;
-    ret = write_cmd(priv, CMD_RAMWR);
-    if (ret != 0) return ret;
-    gpio_level_arg_t dc_level = { .pin = priv->gpio_dc.pin, .level = 1 };
-    ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level);
-    if (ret != 0) return ret;
-    return spi_write_chunked(priv, data, pixels * 2U);
+
+    ret = set_window(priv, x, y, w, h);
+    if (ret == 0) ret = write_cmd(priv, CMD_RAMWR);
+    if (ret == 0) {
+        gpio_level_arg_t dc_level = { .pin = priv->gpio_dc.pin, .level = 1 };
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level);
+    }
+    if (ret == 0) {
+        ret = spi_write_chunked(priv, data, pixels * 2U);
+    }
+
+    device_unlock(priv->spi_dev);
+    return ret;
 }
 
 static int st7789_set_backlight(device_t* dev, uint8_t brightness)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
-    if (!priv) return -1;
+    if (!priv) return VFS_ERR_INVAL;
 
     if (priv->bl_pwm_dev) {
         uint32_t duty = (uint32_t)brightness * 1023U / 255U;
@@ -403,7 +419,7 @@ static int st7789_set_backlight(device_t* dev, uint8_t brightness)
         };
         return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level);
     }
-    return -1;
+    return VFS_ERR_NOSPC;
 }
 
 static int st7789_write_ram(device_t* dev, int x, int y, int w, int h, const uint16_t* pixels)
@@ -413,46 +429,46 @@ static int st7789_write_ram(device_t* dev, int x, int y, int w, int h, const uin
 
 static int st7789_ioctl(device_t* dev, int cmd, void* arg)
 {
-    if (!dev) return -1;
+    if (!dev) return VFS_ERR_INVAL;
     int ret = device_lock(dev);
     if (ret != 0) return ret;
 
     switch (cmd) {
     case ST7789_CMD_GET_INFO:
-        if (!arg) { ret = -1; break; }
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         ret = st7789_get_info(dev, (st7789_info_t*)arg);
         break;
     case ST7789_CMD_FILL_RECT:
-        if (!arg) { ret = -1; break; }
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         {
             st7789_fill_rect_arg_t* a = (st7789_fill_rect_arg_t*)arg;
             ret = st7789_fill_rect(dev, a->x, a->y, a->w, a->h, a->color);
         }
         break;
     case ST7789_CMD_FILL_SCREEN:
-        if (!arg) { ret = -1; break; }
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         ret = st7789_fill_screen(dev, *(uint16_t*)arg);
         break;
     case ST7789_CMD_DRAW_BITMAP:
-        if (!arg) { ret = -1; break; }
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         {
             st7789_draw_bitmap_arg_t* a = (st7789_draw_bitmap_arg_t*)arg;
             ret = st7789_draw_bitmap(dev, a->x, a->y, a->w, a->h, a->data);
         }
         break;
     case ST7789_CMD_SET_BACKLIGHT:
-        if (!arg) { ret = -1; break; }
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         ret = st7789_set_backlight(dev, *(uint8_t*)arg);
         break;
     case ST7789_CMD_WRITE_RAM:
-        if (!arg) { ret = -1; break; }
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         {
             st7789_write_ram_arg_t* a = (st7789_write_ram_arg_t*)arg;
             ret = st7789_write_ram(dev, a->x, a->y, a->w, a->h, a->pixels);
         }
         break;
     default:
-        ret = -1;
+        ret = VFS_ERR_INVAL;
         break;
     }
 

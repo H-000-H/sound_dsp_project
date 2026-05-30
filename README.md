@@ -1,166 +1,120 @@
-# Sound DSP Project (ESP32-S3)
+# 🏗️ Sound DSP Project (ESP32-S3)
 
-> **架构文档** → [`docs/architecture.md`](docs/architecture.md)
-> **踩坑记录** → [`NOTICE.html`](./NOTICE.html)
+> 面向对象、高解耦的嵌入式音频数字信号处理与图形交互系统
 
 ---
 
-## 为什么选 ESP32-S3
+| 文档 | 说明 |
+|------|------|
+| [📄 **核心架构全景** →](docs/architecture.md) | 分层架构、DeviceTree、Capability Engine、内存布局等详细设计 |
+| [📋 **踩坑全记录** →](NOTICE.md) | 架构演进史、疑难杂症根因分析与解决方案 |
 
-| 需求 | C3 | C6 | S3 |
-|------|----|----|-----|
-| PSRAM（本项目刚需） | ❌ 不支持 | ❌ 不支持 | ✅ Octal SPI 8MB |
-| Lottie 渲染缓冲区 160KB | ❌ 内部 SRAM 仅 400KB | ❌ 内部 SRAM 仅 512KB | ✅ PSRAM 分配 |
-| 240×240 圆形屏 + LVGL 9.x | ⚠️ 勉强（单核） | ⚠️ 勉强（单核） | ✅ 双核 LX7 |
-| 音频解码 + EQ 滤波实时性 | ❌ 单核无法同时跑 UI+音频 | ❌ 同左 | ✅ UI 核 + 音频核分离 |
-| Octal SPI 屏幕刷新 | ❌ 仅 Quad SPI | ❌ 仅 Quad SPI | ✅ Octal SPI |
-| AI 加速器 | ❌ | ❌ | ✅ 向量指令集 |
-| USB-OTG | ❌ | ❌ | ✅ |
+---
 
-> **S3 不可替代**：Lottie 渲染需要 PSRAM，C3/C6 均无 PSRAM 控制器。双核架构允许 LVGL 渲染 (Core 0) 和音频解码 (Core 1) 分离，单核 RISC-V 做不到。
+## 1. 🚀 核心选型：为什么是 ESP32-S3？
 
-## 3. 内存布局
+| 核心需求 | ESP32-C3 | ESP32-C6 | **ESP32-S3** |
+|----------|----------|----------|--------------|
+| PSRAM 扩展 (刚需) | ❌ 不支持 | ❌ 不支持 | ✅ Octal SPI 8MB |
+| Lottie 动画渲染 (160KB 缓冲) | ❌ SRAM 仅 400KB | ❌ SRAM 仅 512KB | ✅ PSRAM 充足分配 |
+| 240×240 圆屏 + LVGL 9.x | ⚠️ 单核性能勉强 | ⚠️ 单核性能勉强 | ✅ 双核 LX7 流畅驱动 |
+| 音视频高频并发实时性 | ❌ 单核极易卡音 | ❌ 单核极易卡音 | ✅ UI 核 + 音频核 |
+| 高刷屏通信带宽 | ❌ Quad SPI | ❌ Quad SPI | ✅ Octal SPI |
+| DSP 算法 / 音频算力 | ❌ 标量运算 | ❌ 标量运算 | ✅ 向量指令集加速 |
+| 外设扩展能力 | ❌ 无 USB-OTG | ❌ 无 USB-OTG | ✅ 原生 USB-OTG |
 
-```
-┌─────────────────────────────────────┐
-│  内部 SRAM ~512KB                    │
-│  ├─ FreeRTOS 内核 + 任务栈    ~80KB  │
-│  ├─ LVGL draw buffer + TLSF ~140KB  │
-│  ├─ lwIP 网络缓冲            ~60KB  │
-│  ├─ WiFi 栈                  ~80KB  │
-│  └─ 其他                     剩余   │
-├─────────────────────────────────────┤
-│  PSRAM 8MB                          │
-│  ├─ LVGL 显示缓冲            ~192KB │
-│  ├─ Lottie 渲染缓冲           160KB │
-│  ├─ LCD 任务栈                 8KB  │
-│  ├─ 串口环形缓冲              ~64KB │
-│  └─ 剩余给算法/音频           ~7.5MB │ ← DSP EQ 待用
-└─────────────────────────────────────┘
-```
+> **架构断言**：Lottie 复杂渲染对内存吞吐是海量的，C3/C6 无 PSRAM 直接出局。双核架构是实现 UI 渲染与音频解码物理隔离的唯一解。
 
-| 优化项 | 优化前 | 优化后 | 收益 |
-|--------|--------|--------|------|
-| Lottie 缓冲区 | `.bss` 段（内部 SRAM） | PSRAM 动态堆 | 释放 160KB SRAM |
-| 显示缓冲区 | `MALLOC_CAP_DMA` (DRAM) | `MALLOC_CAP_SPIRAM` | 56KB 移出 DRAM |
-| `LV_MEM_SIZE` | 32KB | 128KB | 解决 draw layer 死锁 |
-| `.dram0.bss` | 9,344 B | 5,376 B | ↓42% |
-| 总静态 DRAM | ~31.3 KB | ~26.5 KB | ↓15% |
+---
 
-## 4. 导航流
+## 2. 🧠 架构总览
+
+系统采用 **7 层单向依赖模型**，从 HAL 到 App 严格分层：
 
 ```
-🔒 LockScreen ─▶ 📋 CardMenu ─▶ ⚙️ 设置 / 🎵 音乐 / 🔌 串口
-       ▲                              │
-       └──────────── ESC ──────────────┘
+app → system → service → capability → board → drivers → hal_if → ESP-IDF
+                ↓                                         ↑
+              media ──────────────────────────────────────┤
+              algorithm (纯 DSP, 无硬件依赖)               │
+              config                                       │
+              core (Lifecycle, EventBus) ──────────────────┘
 ```
 
-- **Layer 1**：锁屏 — 全屏紫灰色 + 状态栏（WiFi/蓝牙/电量/时间），ENTER → Layer 2
-- **Layer 2**：3 卡横向轮播（设置/音乐/串口），ENTER → Layer 3，ESC → Layer 1
-- **Layer 3**：功能页 — 设置（WiFi/蓝牙/MQTT/亮度）、音乐（播放器+选歌）、串口（终端/HEX+日志）
+👉 [详见架构文档 → 系统层级总览](docs/architecture.md#-1-系统层级总览-system-hierarchy)
 
-## 5. 按键映射
+---
 
-| 按键 | GPIO | 功能 |
+## 3. 🕹️ 物理按键映射
+
+| 丝印 | GPIO | 交互语义 |
+|------|------|----------|
+| PREV | 17 | 焦点上移 / 减小参数 / 页面左滑 |
+| NEXT | 16 | 焦点下移 / 增大参数 / 页面右滑 |
+| ENTER | 3 | 唤醒解锁 / 确认执行 / 状态切换 |
+| ESC | 46 | 取消操作 / 返回上一层级 |
+
+> **⚠️ 已知局限**：LVGL 9.5 `LV_INDEV_TYPE_KEYPAD` 在 Group 内会吞噬 PREV/NEXT 事件。当前通过 `KeyInput::process()` 直接拦截 GPIO 轮询绕过（详见 [踩坑记录](NOTICE.md)）。
+
+---
+
+## 4. 🧩 模块职责速查
+
+| 模块 | 职责 | 依赖限制 |
+|------|------|----------|
+| `app/` | LVGL GUI (锁屏/菜单/播放器/设置/串口) | service, system |
+| `core/` | Lifecycle, EventBus 基础设施 | **零硬件依赖** |
+| `system/` | SystemRuntime, TaskManager | core |
+| `service/` | 业务逻辑 (audio/ui/cloud/input) | capability, core |
+| `media/` | MP3 解码 + I2S 输出管线 | board, hal_if |
+| `capability/` | 硬件能力门面 (render/audio/input/led engine) | board, drivers |
+| `board/` | DeviceTree 运行时 + VFS 核心 | drivers |
+| `drivers/` | 外设驱动 (ST7789/MAX98357A/WS2812/gpio_key/light_sensor) | hal_if, osal |
+| `hal_if/` | 函数指针表 (ESP-IDF 隔离层) | **纯接口** |
+| `soc_port_esp32/` | ESP32 芯片平台实现 | hal_if, osal |
+| `osal/` | OS 抽象层 (task/mutex/time/log) | **纯接口** |
+| `algorithm/` | DSP (EQ, Biquad 定点滤波) | **纯计算** |
+| `config/` | 编译时开关 + 运行时配置 | **零依赖** |
+
+---
+
+## 5. 📦 快速开始
+
+```bash
+# 1. 设置 ESP-IDF 环境 (v5.5+)
+source $IDF_PATH/export.sh
+
+# 2. 构建
+idf.py build
+
+# 3. 烧录
+idf.py -p /dev/ttyACM0 flash
+
+# 4. (可选) 监视串口
+idf.py -p /dev/ttyACM0 monitor
+```
+
+> **注意**：ESP-IDF v5.5 在 MSYS2/Mingw 下会被拦截，请使用原生 cmd.exe 或 PowerShell 构建（详见 [踩坑记录](NOTICE.md#21-⚠️-esp-idf-v55-msys2mingw-不支持)）。
+
+---
+
+## 6. 📏 开发红线规范
+
+| 原则 | 要求 |
+|------|------|
+| **沟通先行** | 改核心逻辑或引入新抽象前，必须讨论确认 |
+| **适度封装** | 三个相似行 > 一个过早抽象。不设计未来需求 |
+| **文档同步** | 踩坑必须写入 `NOTICE.md`，注明日期 |
+| **C++ 极简** | 禁用 RTTI 与 try-catch。跨文件回调用静态函数或 C 指针 |
+| **驱动扩展** | 2 步：丢入 `drivers/` + `DRIVER_REGISTER`；更新 Board 注册表 |
+| **层级隔离** | 禁止下层调上层。drivers/ 不包含 UI/App/Service/LVGL 头文件 |
+
+---
+
+## 7. 📚 关键文档索引
+
+| 文档 | 位置 | 内容 |
 |------|------|------|
-| PREV | 17 | 焦点上移 / 减小值 / 左滑 |
-| NEXT | 16 | 焦点下移 / 增大值 / 右滑 |
-| ENTER | 3 | 解锁 / 确认 / 切换 |
-| ESC | 46 | 返回上级 |
-
-> **⚠ 已知问题**：LVGL 9.5 的 `LV_INDEV_TYPE_KEYPAD` 在对象加入 group 后，PREV/NEXT 被 group 内部焦点管理吞噬，不发送 `LV_EVENT_KEY`。当前通过 GPIO 轮询绕过（详见 `NOTICE.html`）。
-
-检测流程：`KeyInput::process()` 调用 `gpio_key_scan()` → 时间戳消抖 → 上升沿/下降沿检测 → `get_pressed_gpio()` 读取
-
-## 6. 模块职责
-
-| 模块 | 解决什么问题 | 入→出 |
-|------|-------------|-------|
-| **app/lvgl** | 240×240 屏幕 GUI：锁屏、菜单、设置、音乐播放器、串口终端 | 按键事件 → 屏幕绘制 |
-| **core/** | Lifecycle/EventBus 基类、日志宏、JSON 配置读取 | 零硬件依赖 |
-| **system/** | 系统编排：SystemRuntime、TaskManager、服务注册表、驱动注册列表 | 初始化 → 服务生命周期 |
-| **service/audio** | MP3 解码、功放控制、音量管理 | 用户操作 → I2S 输出 |
-| **service/ui** | LVGL 主循环入口，函数指针桥接 app | 启动 → lvgl_main() |
-| **service/cloud** | WiFi 连接、MQTT 协议、数据上报 | 云指令 → RGB LED |
-| **service/input** | 按键 GPIO 轮询扫描、消抖、LVGL 回调用 | GPIO → 按键事件 |
-| **board/** | board.dts 编译期 DTS → 静态设备表 + probe 顺序生成 | DTS → 编译期表 → probe |
-| **hal/** | ESP-IDF 函数指针封装（gpio/spi/i2s/pwm/rmt_led），驱动不直接调 IDF | 操作请求 → 硬件 |
-| **drivers/** | 具体硬件驱动：st7789 显示、max98357a 功放、gpio_key 按键、ws2812 LED | 驱动注册 → probe |
-| **algorithm/dsp** | 多段 EQ 滤波、音量平滑（Q31 定点），纯算法不依赖硬件 | 音频流 → 滤波后音频流 |
-
-## 7. DeviceTree 硬件描述 (编译期)
-
-项目使用 **编译期 MCU Lite DTS** (`components/board/board.dts`) 作为唯一硬件配置入口。  
-构建时由 `tools/dtc-lite.py` 解析为 C 静态表，嵌入式运行，无运行时解析开销。
-
-```dts
-/dts-v1/;
-/ {
-    model = "sound_dsp_board_v1";
-    aliases { display0 = &lcd0; i2s-bus = &i2s_audio0; };
-    chosen { display = &lcd0; audio-out = &speaker_amp0; };
-    soc {
-        spi2: spi@2 { compatible = "esp32,spi-bus"; mosi = <5>; sclk = <4>; };
-        i2s_audio0: i2s@0 { compatible = "esp32,i2s-bus"; ws = <13>; bclk = <12>; };
-    };
-    display {
-        lcd0: st7789@0 { compatible = "sitronix,st7789"; depends-on = <&spi2>; ... };
-    };
-};
-```
-
-### 工作流程
-
-```
-board.dts ──▶ dtc-lite.py (编译期) ──▶ board_nodes.h / board_devtable.c / board_probe.c
-                                               │
-                                        board_driver_probe_all()
-                                               │
-                                         设备就绪 (DEVICE_STATUS_PROBED)
-```
-
-- `board.dts` 在构建时由 `dtc-lite.py` 解析，生成 `board_nodes.h`（DEV_ID 枚举）、`board_devtable.c`（静态 device_t 表）、`board_probe.c`（probe 函数表 + 拓扑排序顺序）
-- `DRIVER_REGISTER` 宏在驱动 .c 文件中声明兼容性，dtc-lite.py 编译期扫描匹配
-- 生成代码无 strcmp、无运行时解析，probe 按依赖拓扑排序直接函数调用
-- 服务层通过 `device_find("lcd0")` 或 `DEV_ID_LCD0` 枚举获取设备
-
-**更换硬件只需改 `board.dts` 中的引脚号**，无需改 C 代码。
-
-## 8. 开发规范
-
-- **不擅自改代码**：有修改建议先说明理由再动手
-- **新架构先问**：模块级变动必须先讨论
-- **不构建多余抽象**：三个相似行比过早封装好
-- **每次改完写 NOTICE**：关键踩坑点写入 `NOTICE.md`
-- **文件标注日期**：所有 .html/.md 标注 `YYYY-MM-DD`
-- **层级依赖约束**：
-
-| 层级 | 不允许依赖 |
-|------|-----------|
-| board/ (DTS 核心) | 无上层模块 |
-| hal/ | 无上层模块 |
-| drivers/ | UI, app, service, lvgl |
-| algorithm/ | UI, RTOS, HAL, 任何硬件 |
-| service/ | 不直接调 HAL/ESP-IDF（全通过 driver） |
-| core/ | 无上层模块 |
-
-- **C++ 规范**：禁用 RTTI/异常，跨文件回调用静态成员函数或函数指针
-- **新增驱动流程**：`components/drivers/` 下创建 → 加 `DRIVER_REGISTER` → `board_driver_list.c` 加一行
-
-## 9. DSP / EQ
-
-多段均衡器，Biquad 级联，Q31 定点实现：
-
-```
-        b₀ + b₁·z⁻¹ + b₂·z⁻²
-H(z) = ──────────────────────
-        a₀ + a₁·z⁻¹ + a₂·z⁻²
-```
-
-- 可配置 N 段 EQ（典型 5 段）
-- Q31 定点运算（RBJ 系数 → 定点转换）
-- 音量平滑：一阶 IIR，Q15 系数 `VOLUME_SMOOTH_ALPHA_Q15 = 33`
-
----
-
-> 完整开发时间线、15+ 个关键坑及解决方案 → [`NOTICE.html`](./NOTICE.html)
+| 核心架构 | [docs/architecture.md](docs/architecture.md) | 分层模型、DeviceTree、Capability Engine、内存布局、DSP 算法 |
+| 踩坑全记录 | [NOTICE.md](NOTICE.md) | 架构演进史、重大 Bug 根因、链接器/MSYS2 踩坑、内存优化 |
+| 按键配置 | `tools/kconfig-vscode/README.md` | VS Code Kconfig 集成 |
+| DSP 算法 | `components/algorithm/dsp/README.md` | EQ 滤波器系数说明 |

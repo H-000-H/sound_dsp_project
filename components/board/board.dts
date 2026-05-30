@@ -77,6 +77,8 @@
         rmt: rmt@0 {
             reg = <0>;
             compatible = "esp32,rmt-tx";
+            gpio = <48>;
+            rmt_resolution_hz = <10000000>;
         };
 
         adc0: adc@1 {
@@ -129,7 +131,7 @@
     pwm {
         pwm_backlight: pwm-backlight@0 {
             reg = <0>;
-            compatible = "esp32,pwm-backlight";
+            compatible = "generic,pwm-backlight";
             pwm_pin = <15>;
             freq_hz = <5000>;
             resolution_bits = <10>;
@@ -142,10 +144,8 @@
             reg = <0>;
             compatible = "worldsemi,ws2812";
             depends_on = <&rmt>;
-            gpio = <48>;
             led_count = <1>;
             brightness = <28>;
-            rmt_resolution_hz = <10000000>;
         };
     };
 

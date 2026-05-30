@@ -1,14 +1,16 @@
 #include "ws2812_driver.h"
 
 #include "driver.h"
-#include "vfs_rmt.h"
+#include "VFS.h"
 #include "osal.h"
 #include <string.h>
 
 static const char* kTag = "ws2812";
 
 typedef struct {
-    device_t* rmt_dev;
+    device_t* parent;    /* RMT parent device (发送颜色数据) */
+    uint8_t*  rgb_buf;   /* platform_data: board 层静态 RGB 缓冲区, RGB order */
+    uint8_t   brightness;
 } ws2812_priv_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
@@ -25,20 +27,19 @@ static const file_operation_t ws2812_fops = {
 
 static int ws2812_probe(device_t* dev)
 {
-    int gpio = -1, led_count = 1, brightness = 128;
-    uint32_t rmt_res = 10U * 1000U * 1000U;
-
-    device_get_prop_int(dev, "gpio", &gpio);
+    int led_count = 1, brightness = 28;
     device_get_prop_int(dev, "led_count", &led_count);
     device_get_prop_int(dev, "brightness", &brightness);
-    device_get_prop_int(dev, "rmt_resolution_hz", (int*)&rmt_res);
 
-    if (gpio < 0 || led_count != 1) {
-        DRV_LOGE(kTag, "invalid gpio or led_count");
-        return -1;
+    int ret = 0;
+    ws2812_priv_t* priv = NULL;
+
+    if (led_count != 1) {
+        DRV_LOGE(kTag, "led_count must be 1");
+        ret = VFS_ERR_INVAL;
+        goto err_pool;
     }
 
-    ws2812_priv_t* priv = NULL;
     for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
         if (!s_ws2812_used[i]) {
             s_ws2812_used[i] = 1;
@@ -47,36 +48,37 @@ static int ws2812_probe(device_t* dev)
             break;
         }
     }
-    if (!priv) return -1;
-
-    int ret = 0;
-    priv->rmt_dev = device_get_parent(dev);
-    if (!priv->rmt_dev) {
-        ret = -1;
+    if (!priv) {
+        ret = VFS_ERR_NOMEM;
         goto err_pool;
     }
 
-    rmt_init_arg_t init_arg = { .gpio = gpio, .resolution_hz = rmt_res };
-    ret = device_ioctl(priv->rmt_dev, RMT_CMD_INIT, &init_arg);
-    if (ret != 0) {
+    priv->brightness = (uint8_t)brightness;
+    priv->rgb_buf = (uint8_t*)dev->platform_data;
+    priv->parent = device_get_parent(dev);
+
+    if (!priv->parent) {
+        DRV_LOGE(kTag, "no parent (RMT) device");
+        ret = VFS_ERR_IO;
         goto err_pool;
     }
 
-    uint8_t b = (uint8_t)brightness;
-    ret = device_ioctl(priv->rmt_dev, RMT_CMD_SET_BRIGHT, &b);
-    if (ret == 0) ret = device_ioctl(priv->rmt_dev, RMT_CMD_OFF, NULL);
+    /* 初始关闭: 发送全零 */
+    uint8_t grb[3] = {0, 0, 0};
+    ret = device_write(priv->parent, grb, 3);
     if (ret != 0) {
-        device_ioctl(priv->rmt_dev, RMT_CMD_DEINIT, NULL);
-        goto err_pool;
+        DRV_LOGW(kTag, "initial off failed: %d", ret);
     }
 
     device_set_priv(dev, priv);
     dev->ops = &ws2812_fops;
-    DRV_LOGI(kTag, "probed: GPIO=%d, count=%d, brightness=%d", gpio, led_count, brightness);
+    DRV_LOGI(kTag, "probed: count=%d, brightness=%d", led_count, brightness);
     return 0;
 
 err_pool:
-    for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) { if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; } }
+    for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
+        if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; }
+    }
     return ret;
 }
 
@@ -84,9 +86,14 @@ static int ws2812_remove(device_t* dev)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
     if (priv) {
-        device_ioctl(priv->rmt_dev, RMT_CMD_OFF, NULL);
-        device_ioctl(priv->rmt_dev, RMT_CMD_DEINIT, NULL);
-        for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) { if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; } }
+        /* 关闭 LED */
+        if (priv->parent) {
+            uint8_t grb[3] = {0, 0, 0};
+            device_write(priv->parent, grb, 3);
+        }
+        for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
+            if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; }
+        }
         device_set_priv(dev, NULL);
     }
     return 0;
@@ -103,40 +110,65 @@ static int ws2812_init(device_t* dev)
 static int ws2812_set_color(device_t* dev, uint8_t r, uint8_t g, uint8_t b)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
-    if (!priv) return -1;
-    rmt_rgb_arg_t color = { .r = r, .g = g, .b = b };
-    return device_ioctl(priv->rmt_dev, RMT_CMD_SET_RGB, &color);
+    if (!priv || !priv->parent) return VFS_ERR_INVAL;
+
+    /* 亮度缩放 */
+    uint8_t wr = (r * priv->brightness) / 255;
+    uint8_t wg = (g * priv->brightness) / 255;
+    uint8_t wb = (b * priv->brightness) / 255;
+
+    /* 写入 platform_data 缓冲区 (RGB order, 供外部查询当前颜色) */
+    if (priv->rgb_buf) {
+        priv->rgb_buf[0] = wr;
+        priv->rgb_buf[1] = wg;
+        priv->rgb_buf[2] = wb;
+    }
+
+    /* GRB order = WS2812 物理协议原生格式 */
+    uint8_t grb[3] = {wg, wr, wb};
+    return device_write(priv->parent, grb, 3);
 }
 
 static int ws2812_set_brightness(device_t* dev, uint8_t brightness)
 {
     ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
-    if (!priv) return -1;
-    return device_ioctl(priv->rmt_dev, RMT_CMD_SET_BRIGHT, &brightness);
+    if (!priv) return VFS_ERR_INVAL;
+    priv->brightness = brightness;
+    return 0;
 }
 
 static int ws2812_off(device_t* dev)
 {
-    ws2812_priv_t* priv = (ws2812_priv_t*)device_get_priv(dev);
-    if (!priv) return -1;
-    return device_ioctl(priv->rmt_dev, RMT_CMD_OFF, NULL);
+    return ws2812_set_color(dev, 0, 0, 0);
 }
 
 static int ws2812_ioctl(device_t* dev, int cmd, void* arg)
 {
+    if (!dev) return VFS_ERR_INVAL;
+
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+
     switch (cmd) {
     case WS2812_CMD_SET_COLOR:
-        if (!arg) return -1;
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         {
             ws2812_color_t* c = (ws2812_color_t*)arg;
-            return ws2812_set_color(dev, c->r, c->g, c->b);
+            ret = ws2812_set_color(dev, c->r, c->g, c->b);
         }
+        break;
     case WS2812_CMD_SET_BRIGHTNESS:
-        if (!arg) return -1;
-        return ws2812_set_brightness(dev, *(uint8_t*)arg);
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
+        ret = ws2812_set_brightness(dev, *(uint8_t*)arg);
+        break;
     case WS2812_CMD_OFF:
-        return ws2812_off(dev);
+        ret = ws2812_off(dev);
+        break;
     default:
-        return -1;
+        ret = VFS_ERR_INVAL;
+        break;
     }
+
+    device_unlock(dev);
+    return ret;
 }
