@@ -2,14 +2,18 @@
 
 #include "device.h"
 #include "driver.h"
+#include "VFS.h"
 #include "vfs_adc.h"
 #include "osal.h"
 #include <string.h>
 
 static const char* TAG = "gl5528";
 
+#define LIGHT_SENSOR_MAGIC 0x4C533332U  /* "LS32" */
+
 typedef struct
 {
+    uint32_t magic;
     device_t* adc_dev;
     int adc_channel;
     int adc_atten;
@@ -22,7 +26,7 @@ typedef struct
 static light_sensor_priv_t s_light_sensor_pool[LIGHT_SENSOR_PRIV_POOL_SIZE];
 static uint8_t s_light_sensor_used[LIGHT_SENSOR_PRIV_POOL_SIZE];
 
-static int light_sensor_ioctl(device_t* dev, int cmd, void* arg);
+static int light_sensor_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
 static const file_operation_t light_sensor_fops = {
     .ioctl = light_sensor_ioctl,
 };
@@ -35,21 +39,27 @@ static int light_probe(device_t* dev)
     device_get_prop_int(dev, "adc_atten", &adc_atten);
     device_get_prop_int(dev, "sample_interval_ms", &interval);
 
-    if (adc_channel < 0 || interval <= 0) return -1;
+    int ret = 0;
+    light_sensor_priv_t* priv = NULL;
+
+    if (adc_channel < 0 || interval <= 0) {
+        ret = VFS_ERR_INVAL;
+        goto err_pool;
+    }
 
     device_t* adc_dev = device_get_parent(dev);
-    if (!adc_dev) return -1;
-
-    light_sensor_priv_t* priv = NULL;
-    for (int i = 0; i < LIGHT_SENSOR_PRIV_POOL_SIZE; i++) {
-        if (!s_light_sensor_used[i]) {
-            s_light_sensor_used[i] = 1;
-            priv = &s_light_sensor_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
+    if (!adc_dev) {
+        ret = VFS_ERR_IO;
+        goto err_pool;
     }
-    if (!priv) return -1;
+    int pool_idx = osal_pool_claim(s_light_sensor_used, LIGHT_SENSOR_PRIV_POOL_SIZE);
+    if (pool_idx < 0) {
+        ret = VFS_ERR_NOMEM;
+        goto err_pool;
+    }
+    priv = &s_light_sensor_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
+    priv->magic = LIGHT_SENSOR_MAGIC;
     priv->adc_dev = adc_dev;
     priv->adc_channel = adc_channel;
     priv->adc_atten = adc_atten;
@@ -60,13 +70,25 @@ static int light_probe(device_t* dev)
     dev->ops = &light_sensor_fops;
     DRV_LOGI(TAG, "probed: GPIO%d, chan=%d, atten=%d", adc_pin, adc_channel, adc_atten);
     return 0;
+
+err_pool:
+    if (priv) {
+        for (int i = 0; i < LIGHT_SENSOR_PRIV_POOL_SIZE; i++) {
+            if (&s_light_sensor_pool[i] == priv) { osal_pool_release(s_light_sensor_used, LIGHT_SENSOR_PRIV_POOL_SIZE, i); break; }
+        }
+    }
+    return ret;
 }
 
 static int light_remove(device_t* dev)
 {
     light_sensor_priv_t* priv = (light_sensor_priv_t*)device_get_priv(dev);
     if (priv) {
-        for (int i = 0; i < LIGHT_SENSOR_PRIV_POOL_SIZE; i++) { if (&s_light_sensor_pool[i] == priv) { s_light_sensor_used[i] = 0; break; } }
+        if (priv->magic == LIGHT_SENSOR_MAGIC) {
+            device_ioctl(priv->adc_dev, ADC_CMD_STOP, NULL, 0);
+            priv->magic = 0;
+        }
+        for (int i = 0; i < LIGHT_SENSOR_PRIV_POOL_SIZE; i++) { if (&s_light_sensor_pool[i] == priv) { osal_pool_release(s_light_sensor_used, LIGHT_SENSOR_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;
@@ -77,7 +99,7 @@ DRIVER_REGISTER(light_sensor, "gl5528,photoresistor", light_probe, light_remove)
 static int light_sensor_read(device_t* dev, int* value)
 {
     light_sensor_priv_t* priv = (light_sensor_priv_t*)device_get_priv(dev);
-    if (!priv || !value) return -1;
+    if (!priv || priv->magic != LIGHT_SENSOR_MAGIC || !value) return VFS_ERR_INVAL;
 
     int raw = 0;
     adc_read_arg_t read_arg = {
@@ -86,7 +108,7 @@ static int light_sensor_read(device_t* dev, int* value)
         .bitwidth = priv->bitwidth,
         .out_raw = &raw,
     };
-    int ret = device_ioctl(priv->adc_dev, ADC_CMD_READ_RAW, &read_arg);
+    int ret = device_ioctl(priv->adc_dev, ADC_CMD_READ_RAW, &read_arg, sizeof(read_arg));
     if (ret != 0) return ret;
 
     if (raw < 0) raw = 0;
@@ -95,13 +117,20 @@ static int light_sensor_read(device_t* dev, int* value)
     return 0;
 }
 
-static int light_sensor_ioctl(device_t* dev, int cmd, void* arg)
+static int light_sensor_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
+    light_sensor_priv_t* priv = (light_sensor_priv_t*)device_get_priv(dev);
+    if (priv && priv->magic != LIGHT_SENSOR_MAGIC) return VFS_ERR_INVAL;
+
     switch (cmd) {
-    case LIGHT_SENSOR_CMD_READ:
-        if (!arg) return -1;
-        return light_sensor_read(dev, (int*)arg);
+    case LIGHT_SENSOR_CMD_READ: {
+        if (!arg) return VFS_ERR_INVAL;
+        light_sensor_read_arg_t* a = (light_sensor_read_arg_t*)arg;
+        if (a->magic != LIGHT_SENSOR_READ_MAGIC) return VFS_ERR_INVAL;
+        return light_sensor_read(dev, &a->value);
+    }
     default:
-        return -1;
+        return VFS_ERR_INVAL;
     }
 }

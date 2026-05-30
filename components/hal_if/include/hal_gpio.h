@@ -44,7 +44,7 @@ typedef void (*hal_gpio_isr_t)(void* arg);
  *   强制走 device_ioctl() 通用路径。
  */
 #ifndef HAL_GPIO_FAST_PATH
-#define HAL_GPIO_FAST_PATH 1
+#define HAL_GPIO_FAST_PATH 0
 #endif
 
 #if HAL_GPIO_FAST_PATH

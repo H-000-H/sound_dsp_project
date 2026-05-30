@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -23,6 +24,32 @@ _Static_assert(sizeof(struct osal_mutex) <= OSAL_MUTEX_STORAGE_SIZE,
 
 static struct osal_mutex s_mutex_pool[OSAL_MUTEX_POOL_SIZE];
 static uint8_t s_mutex_used[OSAL_MUTEX_POOL_SIZE];
+static portMUX_TYPE s_osal_pool_lock = portMUX_INITIALIZER_UNLOCKED;
+
+int osal_pool_claim(volatile uint8_t* used_slots, size_t slot_count)
+{
+    if (!used_slots || slot_count == 0) return -1;
+
+    int claimed_index = -1;
+    taskENTER_CRITICAL(&s_osal_pool_lock);
+    for (size_t i = 0; i < slot_count; i++) {
+        if (!used_slots[i]) {
+            used_slots[i] = 1;
+            claimed_index = (int)i;
+            break;
+        }
+    }
+    taskEXIT_CRITICAL(&s_osal_pool_lock);
+    return claimed_index;
+}
+
+void osal_pool_release(volatile uint8_t* used_slots, size_t slot_count, int slot_index)
+{
+    if (!used_slots || slot_index < 0 || (size_t)slot_index >= slot_count) return;
+    taskENTER_CRITICAL(&s_osal_pool_lock);
+    used_slots[slot_index] = 0;
+    taskEXIT_CRITICAL(&s_osal_pool_lock);
+}
 
 uint32_t osal_time_ms(void)
 {
@@ -54,20 +81,17 @@ int osal_mutex_create(osal_mutex_t** out)
     if (!out) return -1;
     *out = NULL;
 
-    for (int i = 0; i < OSAL_MUTEX_POOL_SIZE; i++) {
-        if (!s_mutex_used[i]) {
-            s_mutex_used[i] = 1;
-            struct osal_mutex* m = &s_mutex_pool[i];
-            m->handle = xSemaphoreCreateMutexStatic(&m->sem_buf);
-            if (!m->handle) {
-                s_mutex_used[i] = 0;
-                return -1;
-            }
-            *out = (osal_mutex_t*)m;
-            return 0;
-        }
+    int index = osal_pool_claim(s_mutex_used, OSAL_MUTEX_POOL_SIZE);
+    if (index < 0) return -1;
+
+    struct osal_mutex* m = &s_mutex_pool[index];
+    m->handle = xSemaphoreCreateRecursiveMutexStatic(&m->sem_buf);
+    if (!m->handle) {
+        osal_pool_release(s_mutex_used, OSAL_MUTEX_POOL_SIZE, index);
+        return -1;
     }
-    return -1; /* 池耗尽 */
+    *out = (osal_mutex_t*)m;
+    return 0;
 }
 
 int osal_mutex_create_static(osal_mutex_t** out, void* storage, size_t storage_size)
@@ -76,7 +100,7 @@ int osal_mutex_create_static(osal_mutex_t** out, void* storage, size_t storage_s
     *out = NULL;
 
     struct osal_mutex* m = (struct osal_mutex*)storage;
-    m->handle = xSemaphoreCreateMutexStatic(&m->sem_buf);
+    m->handle = xSemaphoreCreateRecursiveMutexStatic(&m->sem_buf);
     if (!m->handle) return -1;
 
     *out = (osal_mutex_t*)m;
@@ -94,7 +118,7 @@ void osal_mutex_destroy(osal_mutex_t* mutex)
     /* 如果是池中分配的，标记为未使用 */
     for (int i = 0; i < OSAL_MUTEX_POOL_SIZE; i++) {
         if (&s_mutex_pool[i] == m) {
-            s_mutex_used[i] = 0;
+            osal_pool_release(s_mutex_used, OSAL_MUTEX_POOL_SIZE, i);
             break;
         }
     }
@@ -106,13 +130,13 @@ int osal_mutex_lock(osal_mutex_t* mutex, uint32_t timeout_ms)
     TickType_t ticks = (timeout_ms == OSAL_WAIT_FOREVER)
         ? portMAX_DELAY
         : pdMS_TO_TICKS(timeout_ms);
-    return xSemaphoreTake(mutex->handle, ticks) == pdTRUE ? 0 : -1;
+    return xSemaphoreTakeRecursive(mutex->handle, ticks) == pdTRUE ? 0 : -1;
 }
 
 int osal_mutex_unlock(osal_mutex_t* mutex)
 {
     if (!mutex || !mutex->handle) return -1;
-    return xSemaphoreGive(mutex->handle) == pdTRUE ? 0 : -1;
+    return xSemaphoreGiveRecursive(mutex->handle) == pdTRUE ? 0 : -1;
 }
 
 int osal_task_create(const char* name, uint32_t stack_size,

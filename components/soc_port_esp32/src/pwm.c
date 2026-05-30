@@ -23,19 +23,13 @@ static int pwm_init_impl(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resol
         return -1;
     }
 
-    hal_pwm_impl_t* impl = NULL;
-    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) {
-        if (!s_pwm_used[i]) {
-            s_pwm_used[i] = 1;
-            impl = &s_pwm_pool[i];
-            memset(impl, 0, sizeof(*impl));
-            break;
-        }
-    }
-    if (!impl) {
+    int pool_idx = osal_pool_claim(s_pwm_used, PWM_IMPL_POOL_SIZE);
+    if (pool_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
+    hal_pwm_impl_t* impl = &s_pwm_pool[pool_idx];
+    memset(impl, 0, sizeof(*impl));
 
     int ret = 0;
     static int next_timer = 0;
@@ -86,7 +80,7 @@ static int pwm_init_impl(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resol
     return 0;
 
 err_pool:
-    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) { if (&s_pwm_pool[i] == impl) { s_pwm_used[i] = 0; break; } }
+    osal_pool_release(s_pwm_used, PWM_IMPL_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -119,7 +113,7 @@ static int pwm_deinit_impl(hal_pwm_channel_t* pwm)
 
     hal_pwm_impl_t* impl = (hal_pwm_impl_t*)pwm->_impl;
     ledc_stop(impl->speed_mode, impl->channel, 0);
-    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) { if (&s_pwm_pool[i] == impl) { s_pwm_used[i] = 0; break; } }
+    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) { if (&s_pwm_pool[i] == impl) { osal_pool_release(s_pwm_used, PWM_IMPL_POOL_SIZE, i); break; } }
     pwm->_impl = NULL;
     return 0;
 }

@@ -55,9 +55,10 @@ typedef struct file_operation
 {
     int (*init) (device_t* dev);
     int (*open) (device_t* dev, void* arg);
+    int (*close)(device_t* dev);
     int (*write)(device_t* dev, const void* buffer, size_t len);
     int (*read) (device_t* dev, void* buffer, size_t len);
-    int (*ioctl)(device_t* dev, int cmd, void* arg);
+    int (*ioctl)(device_t* dev, int cmd, void* arg, size_t arg_len);
     int (*suspend)(device_t* dev);
     int (*resume)(device_t* dev);
 } file_operation_t;
@@ -109,11 +110,14 @@ int device_tree_init(void);
 int device_lock(device_t* dev);
 int device_unlock(device_t* dev);
 
-/* ── VFS 便捷包装（空指针安全, 调用 dev->ops） ── */
+/* ── VFS 便捷包装（内部自动抓锁, 空指针安全, 调用 dev->ops） ── */
 int device_open(device_t* dev, void* arg);
+int device_close(device_t* dev);
 int device_write(device_t* dev, const void* buf, size_t len);
 int device_read(device_t* dev, void* buf, size_t len);
-int device_ioctl(device_t* dev, int cmd, void* arg);
+int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
+int device_suspend(device_t* dev);
+int device_resume(device_t* dev);
 
 #ifdef __cplusplus
 }

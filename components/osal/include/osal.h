@@ -3,12 +3,14 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define OSAL_WAIT_FOREVER UINT32_MAX
+#define OSAL_LOCK_TIMEOUT_DEFAULT_MS 100U
 
 typedef struct osal_mutex osal_mutex_t;
 typedef void (*osal_task_entry_t)(void* param);
@@ -38,10 +40,20 @@ void osal_mutex_destroy(osal_mutex_t* mutex);
 int osal_mutex_lock(osal_mutex_t* mutex, uint32_t timeout_ms);
 int osal_mutex_unlock(osal_mutex_t* mutex);
 
+/* ── Static Pool Helpers ── */
+int osal_pool_claim(volatile uint8_t* used_slots, size_t slot_count);
+void osal_pool_release(volatile uint8_t* used_slots, size_t slot_count, int slot_index);
+
 /* ── Task ── */
 int osal_task_create(const char* name, uint32_t stack_size,
                      uint32_t priority, osal_task_entry_t entry,
                      void* param, int core_id);
+
+/* ── Panic (不可恢复错误, IEC 61508 fail-fast) ── */
+#define OSAL_PANIC(fmt, ...) do { \
+    osal_log(OSAL_LOG_ERROR, "PANIC", fmt, ##__VA_ARGS__); \
+    abort(); \
+} while (0)
 
 /* ── Logging ── */
 void osal_log(osal_log_level_t level, const char* tag, const char* fmt, ...);

@@ -7,6 +7,12 @@
 
 static const char* kTag = "hal_uart";
 
+static int uart_ret_to_vfs(int ret)
+{
+    if (ret >= 0) return ret;
+    return VFS_ERR_IO;
+}
+
 typedef struct {
     uart_port_t port;
 } hal_uart_impl_t;
@@ -22,19 +28,13 @@ static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
         return -1;
     }
 
-    hal_uart_impl_t* impl = NULL;
-    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) {
-        if (!s_uart_used[i]) {
-            s_uart_used[i] = 1;
-            impl = &s_uart_pool[i];
-            memset(impl, 0, sizeof(*impl));
-            break;
-        }
-    }
-    if (!impl) {
+    int impl_idx = osal_pool_claim(s_uart_used, UART_IMPL_POOL_SIZE);
+    if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
+    hal_uart_impl_t* impl = &s_uart_pool[impl_idx];
+    memset(impl, 0, sizeof(*impl));
 
     int ret = 0;
     impl->port = UART_NUM_1;
@@ -79,9 +79,7 @@ static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
     return 0;
 
 err_pool:
-    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) {
-        if (&s_uart_pool[i] == impl) { s_uart_used[i] = 0; break; }
-    }
+    osal_pool_release(s_uart_used, UART_IMPL_POOL_SIZE, impl_idx);
     return ret;
 }
 
@@ -92,8 +90,7 @@ static int uart_write_impl(hal_uart_t* uart, const uint8_t* data, size_t len)
     }
 
     hal_uart_impl_t* impl = (hal_uart_impl_t*)uart->_impl;
-    int ret = uart_write_bytes(impl->port, data, len);
-    return (ret >= 0) ? 0 : ret;
+    return uart_ret_to_vfs(uart_write_bytes(impl->port, data, len)) >= 0 ? VFS_OK : VFS_ERR_IO;
 }
 
 static int uart_read_impl(hal_uart_t* uart, uint8_t* data, size_t len, uint32_t timeout_ms)
@@ -103,8 +100,7 @@ static int uart_read_impl(hal_uart_t* uart, uint8_t* data, size_t len, uint32_t 
     }
 
     hal_uart_impl_t* impl = (hal_uart_impl_t*)uart->_impl;
-    int ret = uart_read_bytes(impl->port, data, len, osal_ticks_from_ms(timeout_ms));
-    return (ret >= 0) ? ret : ret;
+    return uart_ret_to_vfs(uart_read_bytes(impl->port, data, len, osal_ticks_from_ms(timeout_ms)));
 }
 
 static int uart_deinit_impl(hal_uart_t* uart)
@@ -115,7 +111,7 @@ static int uart_deinit_impl(hal_uart_t* uart)
 
     hal_uart_impl_t* impl = (hal_uart_impl_t*)uart->_impl;
     uart_driver_delete(impl->port);
-    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) { if (&s_uart_pool[i] == impl) { s_uart_used[i] = 0; break; } }
+    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) { if (&s_uart_pool[i] == impl) { osal_pool_release(s_uart_used, UART_IMPL_POOL_SIZE, i); break; } }
     uart->_impl = NULL;
     return 0;
 }
@@ -148,8 +144,9 @@ static int uart_fops_write(device_t* dev, const void* buffer, size_t len)
     return priv->uart.write(&priv->uart, (const uint8_t*)buffer, len);
 }
 
-static int uart_fops_ioctl(device_t* dev, int cmd, void* arg)
+static int uart_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
@@ -193,16 +190,10 @@ static int uart_probe(device_t* dev)
     device_get_prop_int(dev, "stop_bits", &stop_bits);
     device_get_prop_int(dev, "parity", &parity);
 
-    uart_priv_t* priv = NULL;
-    for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) {
-        if (!s_uart_priv_used[i]) {
-            s_uart_priv_used[i] = 1;
-            priv = &s_uart_priv_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return VFS_ERR_NOMEM;
+    int pool_idx = osal_pool_claim(s_uart_priv_used, UART_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    uart_priv_t* priv = &s_uart_priv_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     priv->cfg.tx_pin = tx; priv->cfg.rx_pin = rx;
     priv->cfg.rts_pin = -1; priv->cfg.cts_pin = -1;
@@ -223,9 +214,7 @@ static int uart_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) {
-        if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; }
-    }
+    osal_pool_release(s_uart_priv_used, UART_PRIV_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -234,7 +223,7 @@ static int uart_remove(device_t* dev)
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->uart.deinit(&priv->uart);
-        for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) { if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; } }
+        for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) { if (&s_uart_priv_pool[i] == priv) { osal_pool_release(s_uart_priv_used, UART_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

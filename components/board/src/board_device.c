@@ -6,9 +6,56 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "freertos/portmacro.h"
 
 /* ── 运行时设备实例表 ── */
 static device_t s_devices[DEV_ID_COUNT];
+static uint8_t s_device_lock_storage[DEV_ID_COUNT][OSAL_MUTEX_STORAGE_SIZE];
+
+/* ── board 层静态数据缓冲区 (platform_data 注入) ── */
+static uint8_t s_ws2812_rgb_buf[3];
+
+/* ── device_set_status FSM 原子锁 (IEC 61508 2.7.1) ── */
+static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void board_inject_platform_data(void)
+{
+    /* WS2812: 注入 RGB 缓冲区, 驱动通过 dev->platform_data 获取 */
+    device_t* led_dev = board_dev_get(DEV_ID_LED_0);
+    if (led_dev) {
+        memset(s_ws2812_rgb_buf, 0, sizeof(s_ws2812_rgb_buf));
+        led_dev->platform_data = s_ws2812_rgb_buf;
+    }
+}
+
+static int device_status_can_transit(device_status_t from, device_status_t to)
+{
+    if (from == to) return 1;
+
+    switch (from) {
+    case DEVICE_STATUS_DISABLED:
+        return to == DEVICE_STATUS_READY || to == DEVICE_STATUS_UNINIT;
+    case DEVICE_STATUS_UNINIT:
+        return to == DEVICE_STATUS_READY || to == DEVICE_STATUS_ERROR || to == DEVICE_STATUS_DISABLED;
+    case DEVICE_STATUS_READY:
+        return to == DEVICE_STATUS_PROBED || to == DEVICE_STATUS_DISABLED || to == DEVICE_STATUS_ERROR;
+    case DEVICE_STATUS_PROBED:
+        return to == DEVICE_STATUS_RUNNING || to == DEVICE_STATUS_SUSPENDED ||
+               to == DEVICE_STATUS_READY || to == DEVICE_STATUS_REMOVED || to == DEVICE_STATUS_ERROR;
+    case DEVICE_STATUS_RUNNING:
+        return to == DEVICE_STATUS_SUSPENDED || to == DEVICE_STATUS_READY ||
+               to == DEVICE_STATUS_REMOVED || to == DEVICE_STATUS_ERROR;
+    case DEVICE_STATUS_SUSPENDED:
+        return to == DEVICE_STATUS_RUNNING || to == DEVICE_STATUS_READY ||
+               to == DEVICE_STATUS_REMOVED || to == DEVICE_STATUS_ERROR;
+    case DEVICE_STATUS_ERROR:
+        return 0;
+    case DEVICE_STATUS_REMOVED:
+        return to == DEVICE_STATUS_READY || to == DEVICE_STATUS_DISABLED;
+    default:
+        return 0;
+    }
+}
 
 int device_tree_init(void)
 {
@@ -18,9 +65,24 @@ int device_tree_init(void)
         s_devices[i].status    = node ? node->status : DEVICE_STATUS_DISABLED;
         s_devices[i].priv_data = NULL;
         s_devices[i].ops       = NULL;
+        s_devices[i].lock      = NULL;
+        s_devices[i].platform_data = NULL;
+
+        if (node && s_devices[i].status != DEVICE_STATUS_DISABLED) {
+            osal_mutex_t* lock = NULL;
+            if (osal_mutex_create_static(&lock, s_device_lock_storage[i], sizeof(s_device_lock_storage[i])) == 0) {
+                s_devices[i].lock = lock;
+            } else {
+                OSAL_PANIC("device_tree_init: mutex create failed for dev %d", i);
+            }
+        }
     }
+    board_inject_platform_data();
     return board_dev_count() > 0 ? 0 : -1;
 }
+
+
+
 
 /* ── 运行时设备实例访问 ── */
 device_t* board_dev_get(device_id_t id)
@@ -137,7 +199,13 @@ device_status_t device_get_status(const device_t* dev)
 int device_set_status(device_t* dev, device_status_t status)
 {
     if (!dev) return -1;
+    taskENTER_CRITICAL(&s_status_lock);
+    if (!device_status_can_transit(dev->status, status)) {
+        taskEXIT_CRITICAL(&s_status_lock);
+        return -1;
+    }
     dev->status = status;
+    taskEXIT_CRITICAL(&s_status_lock);
     return 0;
 }
 
@@ -183,56 +251,165 @@ int device_get_count(void)
 static int device_can_access(const device_t* dev)
 {
     if (!dev || !dev->ops) return -1;
-    if (dev->status == DEVICE_STATUS_PROBED ||
-        dev->status == DEVICE_STATUS_RUNNING ||
-        dev->status == DEVICE_STATUS_READY) {
-        return 0;
-    }
+    /* IEC 62304 Class C: 仅 RUNNING 态允许 I/O (禁用 PROBED 态幽灵访问) */
+    if (dev->status == DEVICE_STATUS_RUNNING) return 0;
     return -1;
+}
+
+/* ── 内部锁辅助: 自动抓锁 + 访问校验, 返回 0 可继续, 否则已解锁 ── */
+static int device_lock_and_check(device_t* dev)
+{
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+    if (device_can_access(dev) != 0) {
+        device_unlock(dev);
+        return -1;
+    }
+    return 0;
 }
 
 int device_open(device_t* dev, void* arg)
 {
-    if (device_can_access(dev) != 0 || !dev->ops->open) return -1;
-    int ret = dev->ops->open(dev, arg);
-    if (ret == 0 && dev->status == DEVICE_STATUS_PROBED) {
-        dev->status = DEVICE_STATUS_RUNNING;
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+
+    if (!dev->ops || (!dev->ops->open && !dev->ops->init)) {
+        device_unlock(dev);
+        return -1;
     }
+    if (dev->status != DEVICE_STATUS_PROBED) {
+        device_unlock(dev);
+        return -1;
+    }
+
+    ret = dev->ops->open ? dev->ops->open(dev, arg) : dev->ops->init(dev);
+    if (ret == 0) {
+        device_set_status(dev, DEVICE_STATUS_RUNNING);
+    }
+    device_unlock(dev);
     return ret;
+}
+
+int device_close(device_t* dev)
+{
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+
+    if (dev->status != DEVICE_STATUS_RUNNING) {
+        device_unlock(dev);
+        return -1;
+    }
+    if (dev->ops && dev->ops->close) {
+        ret = dev->ops->close(dev);
+        if (ret != 0) {
+            device_unlock(dev);
+            return ret;
+        }
+    }
+    device_set_status(dev, DEVICE_STATUS_PROBED);
+    device_unlock(dev);
+    return 0;
 }
 
 int device_write(device_t* dev, const void* buf, size_t len)
 {
-    if (device_can_access(dev) != 0 || !dev->ops->write) return -1;
-    return dev->ops->write(dev, buf, len);
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+    if (device_can_access(dev) != 0 || !dev->ops->write) {
+        device_unlock(dev);
+        return -1;
+    }
+    ret = dev->ops->write(dev, buf, len);
+    device_unlock(dev);
+    return ret;
 }
 
 int device_read(device_t* dev, void* buf, size_t len)
 {
-    if (device_can_access(dev) != 0 || !dev->ops->read) return -1;
-    return dev->ops->read(dev, buf, len);
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+    if (device_can_access(dev) != 0 || !dev->ops->read) {
+        device_unlock(dev);
+        return -1;
+    }
+    ret = dev->ops->read(dev, buf, len);
+    device_unlock(dev);
+    return ret;
 }
 
-int device_ioctl(device_t* dev, int cmd, void* arg)
+int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
-    if (device_can_access(dev) != 0 || !dev->ops->ioctl) return -1;
-    return dev->ops->ioctl(dev, cmd, arg);
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+    if (device_can_access(dev) != 0 || !dev->ops->ioctl) {
+        device_unlock(dev);
+        return -1;
+    }
+    ret = dev->ops->ioctl(dev, cmd, arg, arg_len);
+    device_unlock(dev);
+    return ret;
 }
 
-/* ── 设备锁（lazy 创建 mutex） ── */
+int device_suspend(device_t* dev)
+{
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+
+    if (dev->status != DEVICE_STATUS_RUNNING) {
+        device_unlock(dev);
+        return -1;
+    }
+    if (dev->ops && dev->ops->suspend) {
+        ret = dev->ops->suspend(dev);
+        if (ret != 0) {
+            device_unlock(dev);
+            return ret;
+        }
+    }
+    device_set_status(dev, DEVICE_STATUS_SUSPENDED);
+    device_unlock(dev);
+    return 0;
+}
+
+int device_resume(device_t* dev)
+{
+    if (!dev) return -1;
+    int ret = device_lock(dev);
+    if (ret != 0) return ret;
+
+    if (dev->status != DEVICE_STATUS_SUSPENDED) {
+        device_unlock(dev);
+        return -1;
+    }
+    if (dev->ops && dev->ops->resume) {
+        ret = dev->ops->resume(dev);
+        if (ret != 0) {
+            device_unlock(dev);
+            return ret;
+        }
+    }
+    device_set_status(dev, DEVICE_STATUS_RUNNING);
+    device_unlock(dev);
+    return 0;
+}
+
+/* ── 设备锁（启动期静态创建，运行期仅有限时加锁） ── */
 int device_lock(device_t* dev)
 {
     if (!dev) return -1;
-    if (!dev->lock) {
-        osal_mutex_t* m = NULL;
-        if (osal_mutex_create(&m) != 0) return -1;
-        dev->lock = m;
-    }
-    return osal_mutex_lock(dev->lock, OSAL_WAIT_FOREVER);
+    if (!dev->lock) return VFS_ERR_BUSY;
+    return osal_mutex_lock(dev->lock, OSAL_LOCK_TIMEOUT_DEFAULT_MS) == 0 ? VFS_OK : VFS_ERR_BUSY;
 }
 
 int device_unlock(device_t* dev)
 {
     if (!dev || !dev->lock) return -1;
-    return osal_mutex_unlock(dev->lock);
+    return osal_mutex_unlock(dev->lock) == 0 ? VFS_OK : VFS_ERR_IO;
 }

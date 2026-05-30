@@ -10,6 +10,12 @@ static int gpio_pin_valid(int pin)
     return pin >= 0 && pin < GPIO_NUM_MAX;
 }
 
+static int gpio_ret_to_vfs(esp_err_t ret)
+{
+    if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) return VFS_OK;
+    return (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+}
+
 int hal_gpio_init(const hal_gpio_config_t* cfg)
 {
     if (cfg == NULL || !gpio_pin_valid(cfg->pin)) {
@@ -31,13 +37,13 @@ int hal_gpio_init(const hal_gpio_config_t* cfg)
     };
 
     esp_err_t ret = gpio_config(&gpio_cfg);
-    return (ret == ESP_OK) ? 0 : (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+    return gpio_ret_to_vfs(ret);
 }
 
 int hal_gpio_set_level(int pin, int level)
 {
     if (!gpio_pin_valid(pin)) return -1;
-    return gpio_set_level((gpio_num_t)pin, level);
+    return gpio_ret_to_vfs(gpio_set_level((gpio_num_t)pin, level));
 }
 
 int hal_gpio_get_level(int pin)
@@ -50,27 +56,24 @@ int hal_gpio_toggle(int pin)
 {
     if (!gpio_pin_valid(pin)) return -1;
     int level = gpio_get_level((gpio_num_t)pin);
-    return gpio_set_level((gpio_num_t)pin, !level);
+    return gpio_ret_to_vfs(gpio_set_level((gpio_num_t)pin, !level));
 }
 
 int hal_gpio_install_isr(int isr_flags)
 {
-    esp_err_t ret = gpio_install_isr_service(isr_flags);
-    return (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) ? 0 : VFS_ERR_IO;
+    return gpio_ret_to_vfs(gpio_install_isr_service(isr_flags));
 }
 
 int hal_gpio_add_isr(int pin, hal_gpio_isr_t handler, void* arg)
 {
     if (!gpio_pin_valid(pin) || !handler) return -1;
-    esp_err_t ret = gpio_isr_handler_add((gpio_num_t)pin, handler, arg);
-    return (ret == ESP_OK) ? 0 : VFS_ERR_IO;
+    return gpio_ret_to_vfs(gpio_isr_handler_add((gpio_num_t)pin, handler, arg));
 }
 
 int hal_gpio_remove_isr(int pin)
 {
     if (!gpio_pin_valid(pin)) return -1;
-    esp_err_t ret = gpio_isr_handler_remove((gpio_num_t)pin);
-    return (ret == ESP_OK) ? 0 : VFS_ERR_IO;
+    return gpio_ret_to_vfs(gpio_isr_handler_remove((gpio_num_t)pin));
 }
 
 #include "driver.h"
@@ -84,8 +87,9 @@ typedef struct {
 static gpio_ctrl_priv_t s_gpio_ctrl_pool[GPIO_CTRL_PRIV_POOL_SIZE];
 static uint8_t s_gpio_ctrl_used[GPIO_CTRL_PRIV_POOL_SIZE];
 
-static int gpio_ctrl_ioctl(device_t* dev, int cmd, void* arg)
+static int gpio_ctrl_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     switch (cmd) {
     case GPIO_CMD_CONFIG:
         if (!arg) return -1;
@@ -129,15 +133,11 @@ static const file_operation_t gpio_ctrl_fops = {
 
 static int gpio_ctrl_probe(device_t* dev)
 {
-    gpio_ctrl_priv_t* priv = NULL;
-    for (int i = 0; i < GPIO_CTRL_PRIV_POOL_SIZE; i++) {
-        if (!s_gpio_ctrl_used[i]) {
-            s_gpio_ctrl_used[i] = 1;
-            priv = &s_gpio_ctrl_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
+    int pool_idx = osal_pool_claim(s_gpio_ctrl_used, GPIO_CTRL_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+
+    gpio_ctrl_priv_t* priv = &s_gpio_ctrl_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
     if (!priv) return VFS_ERR_NOMEM;
     device_set_priv(dev, priv);
     dev->ops = &gpio_ctrl_fops;
@@ -148,7 +148,7 @@ static int gpio_ctrl_remove(device_t* dev)
 {
     gpio_ctrl_priv_t* priv = (gpio_ctrl_priv_t*)device_get_priv(dev);
     if (priv) {
-        for (int i = 0; i < GPIO_CTRL_PRIV_POOL_SIZE; i++) { if (&s_gpio_ctrl_pool[i] == priv) { s_gpio_ctrl_used[i] = 0; break; } }
+        for (int i = 0; i < GPIO_CTRL_PRIV_POOL_SIZE; i++) { if (&s_gpio_ctrl_pool[i] == priv) { osal_pool_release(s_gpio_ctrl_used, GPIO_CTRL_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

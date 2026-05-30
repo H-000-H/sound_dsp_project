@@ -123,7 +123,7 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
     {
         uint8_t buf[256];
         uart_read_arg_t rarg = { .data = buf, .len = sizeof(buf) - 1, .timeout_ms = 100 };
-        int n = device_ioctl(s_uart_dev, UART_CMD_READ, &rarg);
+        int n = device_ioctl(s_uart_dev, UART_CMD_READ, &rarg, sizeof(rarg));
         if (n > 0)
         {
             if (app->m_term_mode == 1)
@@ -264,7 +264,7 @@ void SerialImpl::stop_serial()
 {
     if (s_uart_dev)
     {
-        device_ioctl(s_uart_dev, UART_CMD_DEINIT, NULL);
+        device_ioctl(s_uart_dev, UART_CMD_DEINIT, NULL, 0);
         s_uart_dev = nullptr;
     }
     /* 恢复原始输出函数 */
@@ -285,7 +285,7 @@ void SerialImpl::on_baud_change(int idx)
     if (s_uart_dev)
     {
         int baud = BAUD_RATES[idx];
-        device_ioctl(s_uart_dev, UART_CMD_SET_BAUD, &baud);
+        device_ioctl(s_uart_dev, UART_CMD_SET_BAUD, &baud, sizeof(baud));
     }
     m_connected = (s_uart_dev != nullptr);
     update_display();

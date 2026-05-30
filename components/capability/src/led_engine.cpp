@@ -30,7 +30,7 @@ static int eng_set_color(led_engine_t* eng, uint8_t r, uint8_t g, uint8_t b)
     led_engine_impl_t* impl = (led_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
     ws2812_color_t c = { .r = r, .g = g, .b = b };
-    return device_ioctl(impl->dev, WS2812_CMD_SET_COLOR, &c);
+    return device_ioctl(impl->dev, WS2812_CMD_SET_COLOR, &c, sizeof(c));
 }
 
 static int eng_set_brightness(led_engine_t* eng, uint8_t brightness)
@@ -38,7 +38,7 @@ static int eng_set_brightness(led_engine_t* eng, uint8_t brightness)
     if (!eng || !eng->_impl) return -1;
     led_engine_impl_t* impl = (led_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
-    return device_ioctl(impl->dev, WS2812_CMD_SET_BRIGHTNESS, &brightness);
+    return device_ioctl(impl->dev, WS2812_CMD_SET_BRIGHTNESS, &brightness, sizeof(brightness));
 }
 
 static int eng_off(led_engine_t* eng)
@@ -46,7 +46,7 @@ static int eng_off(led_engine_t* eng)
     if (!eng || !eng->_impl) return -1;
     led_engine_impl_t* impl = (led_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
-    return device_ioctl(impl->dev, WS2812_CMD_OFF, NULL);
+    return device_ioctl(impl->dev, WS2812_CMD_OFF, NULL, 0);
 }
 
 static void eng_deinit(led_engine_t* eng)

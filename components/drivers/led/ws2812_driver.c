@@ -19,7 +19,7 @@ static ws2812_priv_t s_ws2812_pool[WS2812_PRIV_POOL_SIZE];
 static uint8_t s_ws2812_used[WS2812_PRIV_POOL_SIZE];
 
 static int ws2812_init(device_t* dev);
-static int ws2812_ioctl(device_t* dev, int cmd, void* arg);
+static int ws2812_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
 static const file_operation_t ws2812_fops = {
     .init  = ws2812_init,
     .ioctl = ws2812_ioctl,
@@ -40,18 +40,13 @@ static int ws2812_probe(device_t* dev)
         goto err_pool;
     }
 
-    for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
-        if (!s_ws2812_used[i]) {
-            s_ws2812_used[i] = 1;
-            priv = &s_ws2812_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) {
+    int pool_idx = osal_pool_claim(s_ws2812_used, WS2812_PRIV_POOL_SIZE);
+    if (pool_idx < 0) {
         ret = VFS_ERR_NOMEM;
         goto err_pool;
     }
+    priv = &s_ws2812_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     priv->brightness = (uint8_t)brightness;
     priv->rgb_buf = (uint8_t*)dev->platform_data;
@@ -76,8 +71,10 @@ static int ws2812_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
-        if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; }
+    if (priv) {
+        for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
+            if (&s_ws2812_pool[i] == priv) { osal_pool_release(s_ws2812_used, WS2812_PRIV_POOL_SIZE, i); break; }
+        }
     }
     return ret;
 }
@@ -92,7 +89,7 @@ static int ws2812_remove(device_t* dev)
             device_write(priv->parent, grb, 3);
         }
         for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
-            if (&s_ws2812_pool[i] == priv) { s_ws2812_used[i] = 0; break; }
+            if (&s_ws2812_pool[i] == priv) { osal_pool_release(s_ws2812_used, WS2812_PRIV_POOL_SIZE, i); break; }
         }
         device_set_priv(dev, NULL);
     }
@@ -142,7 +139,7 @@ static int ws2812_off(device_t* dev)
     return ws2812_set_color(dev, 0, 0, 0);
 }
 
-static int ws2812_ioctl(device_t* dev, int cmd, void* arg)
+static int ws2812_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
     if (!dev) return VFS_ERR_INVAL;
 

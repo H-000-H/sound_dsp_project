@@ -18,6 +18,7 @@ static uint8_t s_st7789_line_buf[ST7789_PRIV_POOL_SIZE][ST7789_LINE_BUF_SIZE];
 #define CMD_SWRESET    0x01
 #define CMD_SLPOUT     0x11
 #define CMD_INVON      0x21
+#define CMD_DISPOFF    0x28
 #define CMD_DISPON     0x29
 #define CMD_CASET      0x2A
 #define CMD_RASET      0x2B
@@ -66,7 +67,7 @@ typedef struct
 } st7789_priv_t;
 
 static int st7789_init(device_t* dev);
-static int st7789_ioctl(device_t* dev, int cmd, void* arg);
+static int st7789_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
 static const file_operation_t st7789_fops = {
     .init  = st7789_init,
     .ioctl = st7789_ioctl,
@@ -93,7 +94,7 @@ static int spi_write_chunked(st7789_priv_t* priv, const uint8_t* data, size_t le
 static int write_cmd(st7789_priv_t* priv, uint8_t cmd)
 {
     gpio_level_arg_t level = { .pin = priv->gpio_dc.pin, .level = 0 };
-    int ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level);
+    int ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level));
     if (ret != 0) return ret;
     return spi_write_chunked(priv, &cmd, 1);
 }
@@ -101,7 +102,7 @@ static int write_cmd(st7789_priv_t* priv, uint8_t cmd)
 static int write_data(st7789_priv_t* priv, const uint8_t* data, size_t len)
 {
     gpio_level_arg_t level = { .pin = priv->gpio_dc.pin, .level = 1 };
-    int ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level);
+    int ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level));
     if (ret != 0) return ret;
     return spi_write_chunked(priv, data, len);
 }
@@ -126,7 +127,7 @@ static int send_init_seq(st7789_priv_t* priv)
         }
     }
     gpio_level_arg_t level = { .pin = priv->gpio_dc.pin, .level = 1 };
-    return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level);
+    return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level));
 }
 
 static int rect_in_bounds(const st7789_priv_t* priv, int x, int y, int w, int h)
@@ -197,15 +198,10 @@ static int st7789_probe(device_t* dev)
     device_get_prop_int(dev, "reset", &rst_pin);
     device_get_prop_int(dev, "bl_active_high", &bl_active);
 
-    int pool_idx = -1;
-    for (int i = 0; i < ST7789_PRIV_POOL_SIZE; i++) {
-        if (!s_st7789_used[i]) {
-            s_st7789_used[i] = 1;
-            pool_idx = i;
-            priv = &s_st7789_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
+    int pool_idx = osal_pool_claim(s_st7789_used, ST7789_PRIV_POOL_SIZE);
+    if (pool_idx >= 0) {
+        priv = &s_st7789_pool[pool_idx];
+        memset(priv, 0, sizeof(*priv));
     }
     if (!priv) {
         ret = VFS_ERR_NOMEM;
@@ -244,7 +240,7 @@ static int st7789_probe(device_t* dev)
 
     priv->gpio_dc.pin = dc_pin;
     priv->gpio_dc.mode = HAL_GPIO_MODE_OUTPUT;
-    if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &priv->gpio_dc) != 0) {
+    if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &priv->gpio_dc, sizeof(priv->gpio_dc)) != 0) {
         ret = VFS_ERR_IO;
         goto err_pool;
     }
@@ -252,7 +248,7 @@ static int st7789_probe(device_t* dev)
     if (rst_pin >= 0) {
         priv->gpio_rst.pin = rst_pin;
         priv->gpio_rst.mode = HAL_GPIO_MODE_OUTPUT;
-        if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &priv->gpio_rst) != 0) {
+        if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &priv->gpio_rst, sizeof(priv->gpio_rst)) != 0) {
             ret = VFS_ERR_IO;
             goto err_pool;
         }
@@ -260,7 +256,7 @@ static int st7789_probe(device_t* dev)
 
     if (!priv->bl_pwm_dev && priv->bl_pin >= 0) {
         hal_gpio_config_t bl_cfg = { .pin = priv->bl_pin, .mode = HAL_GPIO_MODE_OUTPUT };
-        if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &bl_cfg) != 0) {
+        if (device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &bl_cfg, sizeof(bl_cfg)) != 0) {
             ret = VFS_ERR_IO;
             goto err_pool;
         }
@@ -268,15 +264,18 @@ static int st7789_probe(device_t* dev)
 
     if (rst_pin >= 0) {
         gpio_level_arg_t rst_level = { .pin = rst_pin, .level = 0 };
-        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &rst_level);
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &rst_level, sizeof(rst_level));
+        if (ret == 0) osal_delay_ms(20);
         rst_level.level = 1;
-        if (ret == 0) ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &rst_level);
+        if (ret == 0) ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &rst_level, sizeof(rst_level));
+        if (ret == 0) osal_delay_ms(120);
         if (ret != 0) {
             goto err_pool;
         }
     }
 
     ret = send_init_seq(priv);
+    if (ret == 0) osal_delay_ms(120);
     if (ret == 0) ret = write_cmd(priv, CMD_NORON);
     if (ret == 0) ret = write_cmd(priv, CMD_DISPON);
     if (ret != 0) {
@@ -285,13 +284,13 @@ static int st7789_probe(device_t* dev)
 
     if (priv->bl_pwm_dev) {
         uint32_t init_duty = priv->bl_active_high ? 1023U : 0U;
-        ret = device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &init_duty);
+        ret = device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &init_duty, sizeof(init_duty));
     } else if (priv->bl_pin >= 0) {
         gpio_level_arg_t bl_level = {
             .pin = priv->bl_pin,
             .level = priv->bl_active_high ? 1 : 0,
         };
-        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &bl_level);
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &bl_level, sizeof(bl_level));
     }
     if (ret != 0) {
         goto err_pool;
@@ -304,7 +303,11 @@ static int st7789_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < ST7789_PRIV_POOL_SIZE; i++) { if (&s_st7789_pool[i] == priv) { s_st7789_used[i] = 0; break; } }
+    if (priv && priv->gpio_dev && priv->bl_pin >= 0 && !priv->bl_pwm_dev) {
+        gpio_level_arg_t bl_off = { .pin = priv->bl_pin, .level = priv->bl_active_high ? 0 : 1 };
+        (void)device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &bl_off, sizeof(bl_off));
+    }
+    if (pool_idx >= 0) osal_pool_release(s_st7789_used, ST7789_PRIV_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -312,8 +315,16 @@ static int st7789_remove(device_t* dev)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
     if (priv) {
+        if (priv->bl_pwm_dev) {
+            uint32_t off_duty = priv->bl_active_high ? 0U : 1023U;
+            (void)device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &off_duty, sizeof(off_duty));
+        } else if (priv->gpio_dev && priv->bl_pin >= 0) {
+            gpio_level_arg_t bl_off = { .pin = priv->bl_pin, .level = priv->bl_active_high ? 0 : 1 };
+            (void)device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &bl_off, sizeof(bl_off));
+        }
+        (void)write_cmd(priv, CMD_DISPOFF);
         device_set_priv(dev, NULL);
-        for (int i = 0; i < ST7789_PRIV_POOL_SIZE; i++) { if (&s_st7789_pool[i] == priv) { s_st7789_used[i] = 0; break; } }
+        for (int i = 0; i < ST7789_PRIV_POOL_SIZE; i++) { if (&s_st7789_pool[i] == priv) { osal_pool_release(s_st7789_used, ST7789_PRIV_POOL_SIZE, i); break; } }
     }
     return 0;
 }
@@ -349,7 +360,7 @@ static int st7789_fill_rect(device_t* dev, int x, int y, int w, int h, uint16_t 
     if (ret == 0) ret = write_cmd(priv, CMD_RAMWR);
     if (ret == 0) {
         gpio_level_arg_t dc_level = { .pin = priv->gpio_dc.pin, .level = 1 };
-        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level);
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level, sizeof(dc_level));
     }
     if (ret == 0) {
         uint8_t hi = (uint8_t)(color >> 8);
@@ -392,7 +403,7 @@ static int st7789_draw_bitmap(device_t* dev, int x, int y, int w, int h, const u
     if (ret == 0) ret = write_cmd(priv, CMD_RAMWR);
     if (ret == 0) {
         gpio_level_arg_t dc_level = { .pin = priv->gpio_dc.pin, .level = 1 };
-        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level);
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &dc_level, sizeof(dc_level));
     }
     if (ret == 0) {
         ret = spi_write_chunked(priv, data, pixels * 2U);
@@ -409,7 +420,7 @@ static int st7789_set_backlight(device_t* dev, uint8_t brightness)
 
     if (priv->bl_pwm_dev) {
         uint32_t duty = (uint32_t)brightness * 1023U / 255U;
-        return device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &duty);
+        return device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &duty, sizeof(duty));
     }
 
     if (priv->bl_pin >= 0) {
@@ -417,7 +428,7 @@ static int st7789_set_backlight(device_t* dev, uint8_t brightness)
             .pin = priv->bl_pin,
             .level = (brightness > 0) == priv->bl_active_high ? 1 : 0,
         };
-        return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level);
+        return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level));
     }
     return VFS_ERR_NOSPC;
 }
@@ -427,7 +438,7 @@ static int st7789_write_ram(device_t* dev, int x, int y, int w, int h, const uin
     return st7789_draw_bitmap(dev, x, y, w, h, (const uint8_t*)pixels);
 }
 
-static int st7789_ioctl(device_t* dev, int cmd, void* arg)
+static int st7789_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
     if (!dev) return VFS_ERR_INVAL;
     int ret = device_lock(dev);

@@ -32,19 +32,13 @@ static int rmt_led_init_impl(hal_rmt_led_t* led, int gpio_num, uint32_t resoluti
         return -1;
     }
 
-    hal_rmt_led_impl_t* impl = NULL;
-    for (int i = 0; i < RMT_LED_IMPL_POOL_SIZE; i++) {
-        if (!s_rmt_led_used[i]) {
-            s_rmt_led_used[i] = 1;
-            impl = &s_rmt_led_pool[i];
-            memset(impl, 0, sizeof(*impl));
-            break;
-        }
-    }
-    if (!impl) {
+    int impl_idx = osal_pool_claim(s_rmt_led_used, RMT_LED_IMPL_POOL_SIZE);
+    if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
+    hal_rmt_led_impl_t* impl = &s_rmt_led_pool[impl_idx];
+    memset(impl, 0, sizeof(*impl));
 
     int ret = 0;
     impl->brightness = 128;
@@ -87,7 +81,7 @@ err_encoder:
 err_channel:
     rmt_del_channel(impl->channel);
 err_pool:
-    for (int i = 0; i < RMT_LED_IMPL_POOL_SIZE; i++) { if (&s_rmt_led_pool[i] == impl) { s_rmt_led_used[i] = 0; break; } }
+    osal_pool_release(s_rmt_led_used, RMT_LED_IMPL_POOL_SIZE, impl_idx);
     return ret;
 }
 
@@ -163,7 +157,7 @@ static int rmt_led_deinit_impl(hal_rmt_led_t* led)
     rmt_disable(impl->channel);
     if (impl->encoder) rmt_del_encoder(impl->encoder);
     if (impl->channel) rmt_del_channel(impl->channel);
-    for (int i = 0; i < RMT_LED_IMPL_POOL_SIZE; i++) { if (&s_rmt_led_pool[i] == impl) { s_rmt_led_used[i] = 0; break; } }
+    for (int i = 0; i < RMT_LED_IMPL_POOL_SIZE; i++) { if (&s_rmt_led_pool[i] == impl) { osal_pool_release(s_rmt_led_used, RMT_LED_IMPL_POOL_SIZE, i); break; } }
     led->_impl = NULL;
     return 0;
 }
@@ -189,8 +183,9 @@ typedef struct {
 static rmt_led_priv_t s_rmt_led_priv_pool[RMT_LED_PRIV_POOL_SIZE];
 static uint8_t s_rmt_led_priv_used[RMT_LED_PRIV_POOL_SIZE];
 
-static int rmt_fops_ioctl(device_t* dev, int cmd, void* arg)
+static int rmt_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     rmt_led_priv_t* priv = (rmt_led_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
@@ -218,27 +213,58 @@ static int rmt_fops_ioctl(device_t* dev, int cmd, void* arg)
     }
 }
 
+static int rmt_fops_write(device_t* dev, const void* buf, size_t len);
+
 static const file_operation_t rmt_fops = {
+    .write = rmt_fops_write,
     .ioctl = rmt_fops_ioctl,
 };
 
+static int rmt_fops_write(device_t* dev, const void* buf, size_t len)
+{
+    rmt_led_priv_t* priv = (rmt_led_priv_t*)device_get_priv(dev);
+    if (!priv || !buf || len < 3) return VFS_ERR_INVAL;
+
+    /* buf[0..2] = GRB (WS2812 native order) */
+    uint8_t g = ((const uint8_t*)buf)[0];
+    uint8_t r = ((const uint8_t*)buf)[1];
+    uint8_t b = ((const uint8_t*)buf)[2];
+
+    return priv->led.set_rgb(&priv->led, r, g, b);
+}
+
 static int rmt_led_probe(device_t* dev)
 {
-    rmt_led_priv_t* priv = NULL;
-    for (int i = 0; i < RMT_LED_PRIV_POOL_SIZE; i++) {
-        if (!s_rmt_led_priv_used[i]) {
-            s_rmt_led_priv_used[i] = 1;
-            priv = &s_rmt_led_priv_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
+    int gpio = -1;
+    uint32_t resolution_hz = 10U * 1000U * 1000U;
+    device_get_prop_int(dev, "gpio", &gpio);
+    device_get_prop_int(dev, "rmt_resolution_hz", (int*)&resolution_hz);
+
+    if (gpio < 0) {
+        DRV_LOGE(kTag, "missing gpio property");
+        return VFS_ERR_INVAL;
     }
-    if (!priv) return VFS_ERR_NOMEM;
+
+    int pool_idx = osal_pool_claim(s_rmt_led_priv_used, RMT_LED_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    rmt_led_priv_t* priv = &s_rmt_led_priv_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     hal_rmt_led_init_struct(&priv->led);
+
+    int ret = priv->led.init(&priv->led, gpio, resolution_hz);
+    if (ret != 0) {
+        DRV_LOGE(kTag, "init failed: %d", ret);
+        osal_pool_release(s_rmt_led_priv_used, RMT_LED_PRIV_POOL_SIZE, pool_idx);
+        return ret;
+    }
+
+    /* 亮度 255 = 透传: WS2812 驱动自行处理 brightness 缩放 */
+    priv->led.set_brightness(&priv->led, 255);
+
     device_set_priv(dev, priv);
     dev->ops = &rmt_fops;
-    DRV_LOGI(kTag, "RMT LED platform driver probed");
+    DRV_LOGI(kTag, "RMT LED platform driver probed: GPIO=%d, res=%u", gpio, resolution_hz);
     return 0;
 }
 
@@ -250,7 +276,7 @@ static int rmt_led_remove(device_t* dev)
             priv->led.off(&priv->led);
             priv->led.deinit(&priv->led);
         }
-        for (int i = 0; i < RMT_LED_PRIV_POOL_SIZE; i++) { if (&s_rmt_led_priv_pool[i] == priv) { s_rmt_led_priv_used[i] = 0; break; } }
+        for (int i = 0; i < RMT_LED_PRIV_POOL_SIZE; i++) { if (&s_rmt_led_priv_pool[i] == priv) { osal_pool_release(s_rmt_led_priv_used, RMT_LED_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

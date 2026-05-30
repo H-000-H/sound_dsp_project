@@ -46,7 +46,7 @@ void SettingsImpl::on_brightness(int val)
     device_t* lcd = device_find("lcd0");
     if (lcd) {
         uint8_t brightness = (uint8_t)(val * 255 / 100);
-        device_ioctl(lcd, ST7789_CMD_SET_BACKLIGHT, &brightness);
+        device_ioctl(lcd, ST7789_CMD_SET_BACKLIGHT, &brightness, sizeof(brightness));
     }
 }
 

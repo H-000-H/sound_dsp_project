@@ -12,6 +12,7 @@
 | 🏗️ 第二阶段解耦 | [16. DeviceTree + Driver Model](#16-架构重建devicetree--驱动全解耦) · [17. Media + Capability](#17-边界划定media层--capability隔离) |
 | 🐛 第三阶段踩坑 | [18. 串口重启](#18-未解决-pc-关闭串口时系统自动重启) · [19. 链接器符号吞噬](#19-链接器大坑纯-probe-表驱动的符号被吞噬) · [20. 状态机](#20-app-层状态机守卫) · [21. MSYS2](#21-esp-idf-v55-拦截-msys2-构建) |
 | 🚀 第四阶段改造 | [22. Platform Driver 化](#22-hw_hal-全量-linux-platform-driver-化) · [23. OS/MCU 解耦](#23-osmcu-完全解耦-三层物理抽象) · [24. Goto 清理](#24-引入-linux-kernel-风格-goto-清理流) · [25. WS2812 剥离](#25-ws2812-物理剥离与-platform-data-注入) · [26. 错误码统配](#26-全局负数错误码-posix-error-codes-统配) · [27. 总线锁](#27-spi-父设备总线锁-多步事务原子性) · [28. 最终修复](#28-扫清最后的架构瑕疵-the-final-touch) |
+| 🔒 第五阶段安全 | [29. IEC 61508 深度修复](#29-iec-61508--iec-62304-深度安全修复) |
 
 ---
 
@@ -165,3 +166,36 @@
 | ✂️ 背光层跨界 | `pwm_bl` 从 ESP32 私有目录迁至通用 `drivers/display`，compatible 改为 `generic,pwm-backlight` |
 | 🔒 WS2812 裸奔 | 补齐 `ws2812_ioctl` 缺失的 `device_lock/unlock`，保护纳秒级 RMT 时序 |
 | 💾 初始化序列 | 定长结构体 → 扁平字节流解析，单命令参数不再受限，压缩 ROM 占用 |
+
+## 🛡️ 29. IEC 61508 / IEC 62304 深度安全修复
+
+### 29.1 FSM 原子性 (device_set_status)
+- **[IEC 61508 §2.7.1]** `device_set_status` 的 read-check-write 不再裸奔。引入 `portMUX_TYPE s_status_lock` + `taskENTER_CRITICAL` 保护状态转换。
+- **[fail-fast]** `device_tree_init` 中 mutex 创建失败不再静默降级，直接 `OSAL_PANIC` (log + abort)。
+
+### 29.2 递归互斥锁 (Recursive Mutex)
+- **[IEC 62304 §5.3.3]** `osal_freertos.c` 全面升级：`xSemaphoreCreateMutexStatic` → `xSemaphoreCreateRecursiveMutexStatic`，lock/unlock 同步改为 `TakeRecursive`/`GiveRecursive`。
+- **[收益]** 消除 VFS 层与驱动内部同时 `device_lock` 时的自我死锁风险。
+
+### 29.3 生命周期锁 (Lifecycle Locking)
+- **[信任倒置修复]** `device_open`/`device_read`/`device_write`/`device_ioctl` 内部强制 `device_lock(dev)` → 执行 ops → `device_unlock(dev)`。应用层不再需要手动加锁。
+- **[TOCTOU 消灭]** `device_open` 全程持锁，杜绝 Time-of-Check / Time-of-Use 竞态。线程 A 与 B 同时 open 同一设备不再导致 DMA/GPIO 双重配置。
+- **[新增]** `device_close`/`device_suspend`/`device_resume` 生命周期函数，遵循同一持锁闭环规范。
+
+### 29.4 状态机访问屏障 (Phantom I/O 阻断)
+- **[IEC 61508 §3.2.3]** `device_can_access` 现在仅允许 `DEVICE_STATUS_RUNNING` 态通行。`PROBED` 态不再允许 read/write/ioctl，防止硬件未上电时的幽灵寄存器访问。
+- **[影响]** 驱动 probe 期间对父设备的 I/O 需要通过提前 `device_open` 确保父设备进入 RUNNING 态。
+
+### 29.5 IOCTL 边界强制 (sizeof Validation)
+- **[IEC 61508 §3.1.5]** `device_ioctl` 签名增加 `size_t arg_len` 参数：`int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)`。
+- `file_operation_t.ioctl` 同步更新，13 个驱动 + 15 个调用文件全部适配。
+- 驱动内部可通过 `arg_len != sizeof(expected_type)` 校验参数完整性，杜绝 `void*` 越界。
+
+### 29.6 Magic Number 类型安全
+- **[IEC 62304 §5.5.4]** `light_sensor_priv_t` 增加 `magic` 字段 (`0x4C533332`)，probe 时写入，ioctl/read 入口校验。
+- `light_sensor_read_arg_t` 增加 `magic` 字段 (`0x52454144`)，ioctl 做 struct 类型验证后提取 `value`。
+- `light_remove` 增加硬件静默：发送 `ADC_CMD_STOP` 后清除 magic，fail-safe 状态确认。
+
+### 29.7 ADC 安全关闭命令
+- **[新增]** `vfs_adc.h`/`hal_adc.h` 增加 `ADC_CMD_STOP 0x71`。`adc.c` ioctl 处理（oneshot 模式为安全 no-op）。
+- `light_sensor_remove` 调用 `ADC_CMD_STOP` 告知硬件层释放通道引用。

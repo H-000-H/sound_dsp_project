@@ -1,6 +1,7 @@
 #include "gpio_key_driver.h"
 
 #include "driver.h"
+#include "VFS.h"
 #include "vfs_gpio.h"
 #include "osal.h"
 #include <string.h>
@@ -40,7 +41,7 @@ static uint32_t current_tick_ms(void)
 
 /* ── VFS 操作表 ── */
 static int gpio_key_init(device_t* dev);
-static int gpio_key_ioctl(device_t* dev, int cmd, void* arg);
+static int gpio_key_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
 static const file_operation_t gpio_key_fops = {
     .init  = gpio_key_init,
     .ioctl = gpio_key_ioctl,
@@ -52,21 +53,17 @@ static int gpio_key_probe(device_t* dev)
     int debounce = 50;
     device_get_prop_int(dev, "debounce_ms", &debounce);
 
-    gpio_key_priv_t* priv = NULL;
-    for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) {
-        if (!s_gpio_key_used[i]) {
-            s_gpio_key_used[i] = 1;
-            priv = &s_gpio_key_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return -1;
-
     int ret = 0;
+    int pool_idx = osal_pool_claim(s_gpio_key_used, GPIO_KEY_PRIV_POOL_SIZE);
+    if (pool_idx < 0) {
+        ret = VFS_ERR_NOMEM;
+        goto err_pool;
+    }
+    gpio_key_priv_t* priv = &s_gpio_key_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
     priv->gpio_dev = device_get_phandle_dev(dev, "gpio");
     if (!priv->gpio_dev) {
-        ret = -1;
+        ret = VFS_ERR_IO;
         goto err_pool;
     }
 
@@ -99,7 +96,7 @@ static int gpio_key_probe(device_t* dev)
             .pullup = HAL_GPIO_PULL_ENABLE,
             .pulldown = HAL_GPIO_PULL_DISABLE,
         };
-        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &cfg);
+        ret = device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &cfg, sizeof(cfg));
         if (ret != 0) {
             goto err_pool;
         }
@@ -118,7 +115,9 @@ static int gpio_key_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) { if (&s_gpio_key_pool[i] == priv) { s_gpio_key_used[i] = 0; break; } }
+    if (priv) {
+        for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) { if (&s_gpio_key_pool[i] == priv) { osal_pool_release(s_gpio_key_used, GPIO_KEY_PRIV_POOL_SIZE, i); break; } }
+    }
     return ret;
 }
 
@@ -126,7 +125,7 @@ static int gpio_key_remove(device_t* dev)
 {
     gpio_key_priv_t* priv = (gpio_key_priv_t*)device_get_priv(dev);
     if (priv) {
-        for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) { if (&s_gpio_key_pool[i] == priv) { s_gpio_key_used[i] = 0; break; } }
+        for (int i = 0; i < GPIO_KEY_PRIV_POOL_SIZE; i++) { if (&s_gpio_key_pool[i] == priv) { osal_pool_release(s_gpio_key_used, GPIO_KEY_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;
@@ -151,7 +150,7 @@ static int gpio_key_scan(device_t* dev, gpio_key_state_t* out, int max_keys)
     for (int i = 0; i < priv->key_count && count < max_keys; i++) {
         key_entry_t* k = &priv->keys[i];
         gpio_level_arg_t level_arg = { .pin = k->gpio_pin, .level = 0 };
-        if (device_ioctl(priv->gpio_dev, GPIO_CMD_GET_LEVEL, &level_arg) != 0) {
+        if (device_ioctl(priv->gpio_dev, GPIO_CMD_GET_LEVEL, &level_arg, sizeof(level_arg)) != 0) {
             continue;
         }
         int raw = level_arg.level;
@@ -206,18 +205,28 @@ static int gpio_key_get_count(device_t* dev)
 }
 
 /* ── ioctl ── */
-static int gpio_key_ioctl(device_t* dev, int cmd, void* arg)
+static int gpio_key_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
+    int lock_ret = device_lock(dev);
+    if (lock_ret != 0) return lock_ret;
+
+    int ret = VFS_ERR_INVAL;
     switch (cmd) {
     case GPIO_KEY_CMD_SCAN:
-        if (!arg) return -1;
+        if (!arg) { ret = VFS_ERR_INVAL; break; }
         {
             gpio_key_scan_arg_t* a = (gpio_key_scan_arg_t*)arg;
-            return gpio_key_scan(dev, a->out, a->max_keys);
+            ret = gpio_key_scan(dev, a->out, a->max_keys);
         }
+        break;
     case GPIO_KEY_CMD_GET_COUNT:
-        return gpio_key_get_count(dev);
+        ret = gpio_key_get_count(dev);
+        break;
     default:
-        return -1;
+        ret = VFS_ERR_INVAL;
+        break;
     }
+    device_unlock(dev);
+    return ret;
 }

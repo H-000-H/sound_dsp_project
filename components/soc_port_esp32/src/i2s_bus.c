@@ -19,25 +19,34 @@ typedef struct {
 static hal_i2s_impl_t s_i2s_pool[I2S_IMPL_POOL_SIZE];
 static uint8_t s_i2s_used[I2S_IMPL_POOL_SIZE];
 
+static void i2s_release_impl(hal_i2s_impl_t* impl)
+{
+    if (!impl) return;
+    if (impl->tx_handle) {
+        i2s_channel_disable(impl->tx_handle);
+        i2s_del_channel(impl->tx_handle);
+        impl->tx_handle = NULL;
+    }
+    if (impl->rx_handle) {
+        i2s_channel_disable(impl->rx_handle);
+        i2s_del_channel(impl->rx_handle);
+        impl->rx_handle = NULL;
+    }
+}
+
 static int i2s_init_impl(hal_i2s_bus_t* bus, const hal_i2s_config_t* cfg)
 {
     if (bus == NULL || cfg == NULL) {
         return -1;
     }
 
-    hal_i2s_impl_t* impl = NULL;
-    for (int i = 0; i < I2S_IMPL_POOL_SIZE; i++) {
-        if (!s_i2s_used[i]) {
-            s_i2s_used[i] = 1;
-            impl = &s_i2s_pool[i];
-            memset(impl, 0, sizeof(*impl));
-            break;
-        }
-    }
-    if (!impl) {
+    int impl_idx = osal_pool_claim(s_i2s_used, I2S_IMPL_POOL_SIZE);
+    if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
+    hal_i2s_impl_t* impl = &s_i2s_pool[impl_idx];
+    memset(impl, 0, sizeof(*impl));
 
     int ret = 0;
     impl->sample_rate = cfg->sample_rate;
@@ -112,15 +121,13 @@ static int i2s_init_impl(hal_i2s_bus_t* bus, const hal_i2s_config_t* cfg)
         if (esp_ret != ESP_OK) {
             DRV_LOGE(kTag, "i2s rx init failed: %d", esp_ret);
             ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
-            if (impl->tx_handle) i2s_del_channel(impl->tx_handle);
-            goto err_pool;
+            goto err_chan;
         }
         esp_ret = i2s_channel_enable(impl->rx_handle);
         if (esp_ret != ESP_OK) {
             DRV_LOGE(kTag, "i2s rx enable failed: %d", esp_ret);
             ret = (esp_ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
-            if (impl->tx_handle) i2s_del_channel(impl->tx_handle);
-            goto err_pool;
+            goto err_chan;
         }
     }
 
@@ -128,9 +135,9 @@ static int i2s_init_impl(hal_i2s_bus_t* bus, const hal_i2s_config_t* cfg)
     return 0;
 
 err_chan:
-    if (impl->tx_handle) i2s_del_channel(impl->tx_handle);
+    i2s_release_impl(impl);
 err_pool:
-    for (int i = 0; i < I2S_IMPL_POOL_SIZE; i++) { if (&s_i2s_pool[i] == impl) { s_i2s_used[i] = 0; break; } }
+    osal_pool_release(s_i2s_used, I2S_IMPL_POOL_SIZE, impl_idx);
     return ret;
 }
 
@@ -138,7 +145,7 @@ static int i2s_write_impl(hal_i2s_bus_t* bus, const int16_t* samples,
                            size_t bytes, size_t* written, uint32_t timeout_ms)
 {
     if (bus == NULL || bus->_impl == NULL || samples == NULL) {
-        return -1;
+        return VFS_ERR_INVAL;
     }
 
     hal_i2s_impl_t* impl = (hal_i2s_impl_t*)bus->_impl;
@@ -160,15 +167,8 @@ static int i2s_deinit_impl(hal_i2s_bus_t* bus)
     }
 
     hal_i2s_impl_t* impl = (hal_i2s_impl_t*)bus->_impl;
-    if (impl->tx_handle) {
-        i2s_channel_disable(impl->tx_handle);
-        i2s_del_channel(impl->tx_handle);
-    }
-    if (impl->rx_handle) {
-        i2s_channel_disable(impl->rx_handle);
-        i2s_del_channel(impl->rx_handle);
-    }
-    for (int i = 0; i < I2S_IMPL_POOL_SIZE; i++) { if (&s_i2s_pool[i] == impl) { s_i2s_used[i] = 0; break; } }
+    i2s_release_impl(impl);
+    for (int i = 0; i < I2S_IMPL_POOL_SIZE; i++) { if (&s_i2s_pool[i] == impl) { osal_pool_release(s_i2s_used, I2S_IMPL_POOL_SIZE, i); break; } }
     bus->_impl = NULL;
     return 0;
 }
@@ -199,8 +199,9 @@ static int i2s_fops_write(device_t* dev, const void* buffer, size_t len)
     return priv->bus.write(&priv->bus, (const int16_t*)buffer, len, NULL, 1000);
 }
 
-static int i2s_fops_ioctl(device_t* dev, int cmd, void* arg)
+static int i2s_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
@@ -235,16 +236,10 @@ static int i2s_probe(device_t* dev)
         return -1;
     }
 
-    i2s_bus_priv_t* priv = NULL;
-    for (int i = 0; i < I2S_BUS_PRIV_POOL_SIZE; i++) {
-        if (!s_i2s_bus_priv_used[i]) {
-            s_i2s_bus_priv_used[i] = 1;
-            priv = &s_i2s_bus_priv_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return VFS_ERR_NOMEM;
+    int pool_idx = osal_pool_claim(s_i2s_bus_priv_used, I2S_BUS_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    i2s_bus_priv_t* priv = &s_i2s_bus_priv_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     hal_i2s_config_t cfg = {
         .ws_pin = ws, .bclk_pin = bclk, .dout_pin = dout, .din_pin = din,
@@ -264,7 +259,7 @@ static int i2s_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < I2S_BUS_PRIV_POOL_SIZE; i++) { if (&s_i2s_bus_priv_pool[i] == priv) { s_i2s_bus_priv_used[i] = 0; break; } }
+    osal_pool_release(s_i2s_bus_priv_used, I2S_BUS_PRIV_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -273,7 +268,7 @@ static int i2s_remove(device_t* dev)
     i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->bus.deinit(&priv->bus);
-        for (int i = 0; i < I2S_BUS_PRIV_POOL_SIZE; i++) { if (&s_i2s_bus_priv_pool[i] == priv) { s_i2s_bus_priv_used[i] = 0; break; } }
+        for (int i = 0; i < I2S_BUS_PRIV_POOL_SIZE; i++) { if (&s_i2s_bus_priv_pool[i] == priv) { osal_pool_release(s_i2s_bus_priv_used, I2S_BUS_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

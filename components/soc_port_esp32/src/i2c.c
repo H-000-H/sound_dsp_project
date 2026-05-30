@@ -31,6 +31,13 @@ typedef struct
 static hal_i2c_impl_t s_i2c_pool[I2C_IMPL_POOL_SIZE];
 static uint8_t s_i2c_used[I2C_IMPL_POOL_SIZE];
 
+static int i2c_ret_to_vfs(esp_err_t ret)
+{
+    if (ret == ESP_OK) return VFS_OK;
+    if (ret == ESP_ERR_TIMEOUT) return VFS_ERR_BUSY;
+    return (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+}
+
 static int i2c_get_device(hal_i2c_impl_t* impl, uint8_t addr, i2c_master_dev_handle_t* out)
 {
     if (!impl || !out || addr == 0 || addr > 0x7F) return -1;
@@ -51,7 +58,7 @@ static int i2c_get_device(hal_i2c_impl_t* impl, uint8_t addr, i2c_master_dev_han
             };
             esp_err_t ret = i2c_master_bus_add_device(impl->bus_handle, &dev_cfg,
                                                        &impl->devices[i].handle);
-            if (ret != ESP_OK) return ret;
+            if (ret != ESP_OK) return i2c_ret_to_vfs(ret);
             impl->devices[i].addr = addr;
             *out = impl->devices[i].handle;
             return 0;
@@ -67,16 +74,10 @@ static int i2c_init_impl(hal_i2c_bus_t* bus, const hal_i2c_config_t* cfg)
         return -1;
     }
 
-    hal_i2c_impl_t* impl = NULL;
-    for (int i = 0; i < I2C_IMPL_POOL_SIZE; i++) {
-        if (!s_i2c_used[i]) {
-            s_i2c_used[i] = 1;
-            impl = &s_i2c_pool[i];
-            memset(impl, 0, sizeof(*impl));
-            break;
-        }
-    }
-    if (!impl) return VFS_ERR_NOMEM;
+    int impl_idx = osal_pool_claim(s_i2c_used, I2C_IMPL_POOL_SIZE);
+    if (impl_idx < 0) return VFS_ERR_NOMEM;
+    hal_i2c_impl_t* impl = &s_i2c_pool[impl_idx];
+    memset(impl, 0, sizeof(*impl));
     int ret = 0;
     impl->clock_hz = cfg->clock_hz;
 
@@ -107,20 +108,20 @@ static int i2c_init_impl(hal_i2c_bus_t* bus, const hal_i2c_config_t* cfg)
 err_mutex:
     osal_mutex_destroy(impl->lock);
 err_pool:
-    for (int i = 0; i < I2C_IMPL_POOL_SIZE; i++) { if (&s_i2c_pool[i] == impl) { s_i2c_used[i] = 0; break; } }
+    osal_pool_release(s_i2c_used, I2C_IMPL_POOL_SIZE, impl_idx);
     return ret;
 }
 
 static int i2c_write_impl(hal_i2c_bus_t* bus, uint8_t addr,
                           const uint8_t* data, size_t len, uint32_t timeout_ms)
 {
-    if (!bus || !bus->_impl || !data || len == 0) return -1;
+    if (!bus || !bus->_impl || !data || len == 0) return VFS_ERR_INVAL;
     hal_i2c_impl_t* impl = (hal_i2c_impl_t*)bus->_impl;
 
-    if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return -1;
+    if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return VFS_ERR_BUSY;
     i2c_master_dev_handle_t dev = NULL;
     int ret = i2c_get_device(impl, addr, &dev);
-    if (ret == 0) ret = i2c_master_transmit(dev, data, len, (int)timeout_ms);
+    if (ret == 0) ret = i2c_ret_to_vfs(i2c_master_transmit(dev, data, len, (int)timeout_ms));
     osal_mutex_unlock(impl->lock);
     return ret;
 }
@@ -128,13 +129,13 @@ static int i2c_write_impl(hal_i2c_bus_t* bus, uint8_t addr,
 static int i2c_read_impl(hal_i2c_bus_t* bus, uint8_t addr,
                          uint8_t* data, size_t len, uint32_t timeout_ms)
 {
-    if (!bus || !bus->_impl || !data || len == 0) return -1;
+    if (!bus || !bus->_impl || !data || len == 0) return VFS_ERR_INVAL;
     hal_i2c_impl_t* impl = (hal_i2c_impl_t*)bus->_impl;
 
-    if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return -1;
+    if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return VFS_ERR_BUSY;
     i2c_master_dev_handle_t dev = NULL;
     int ret = i2c_get_device(impl, addr, &dev);
-    if (ret == 0) ret = i2c_master_receive(dev, data, len, (int)timeout_ms);
+    if (ret == 0) ret = i2c_ret_to_vfs(i2c_master_receive(dev, data, len, (int)timeout_ms));
     osal_mutex_unlock(impl->lock);
     return ret;
 }
@@ -143,13 +144,13 @@ static int i2c_read_write_imp(hal_i2c_bus_t* bus, uint8_t addr,
                               const uint8_t* wdata, size_t wlen,
                               uint8_t* rdata, size_t rlen, uint32_t timeout_ms)
 {
-    if (!bus || !bus->_impl || !wdata || !rdata || wlen == 0 || rlen == 0) return -1;
+    if (!bus || !bus->_impl || !wdata || !rdata || wlen == 0 || rlen == 0) return VFS_ERR_INVAL;
     hal_i2c_impl_t* impl = (hal_i2c_impl_t*)bus->_impl;
 
-    if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return -1;
+    if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return VFS_ERR_BUSY;
     i2c_master_dev_handle_t dev = NULL;
     int ret = i2c_get_device(impl, addr, &dev);
-    if (ret == 0) ret = i2c_master_transmit_receive(dev, wdata, wlen, rdata, rlen, (int)timeout_ms);
+    if (ret == 0) ret = i2c_ret_to_vfs(i2c_master_transmit_receive(dev, wdata, wlen, rdata, rlen, (int)timeout_ms));
     osal_mutex_unlock(impl->lock);
     return ret;
 }
@@ -169,7 +170,7 @@ static int i2c_deinit(hal_i2c_bus_t* bus)
         i2c_del_master_bus(impl->bus_handle);
     }
     osal_mutex_destroy(impl->lock);
-    for (int i = 0; i < I2C_IMPL_POOL_SIZE; i++) { if (&s_i2c_pool[i] == impl) { s_i2c_used[i] = 0; break; } }
+    for (int i = 0; i < I2C_IMPL_POOL_SIZE; i++) { if (&s_i2c_pool[i] == impl) { osal_pool_release(s_i2c_used, I2C_IMPL_POOL_SIZE, i); break; } }
     bus->_impl = NULL;
     return 0;
 }
@@ -193,8 +194,9 @@ typedef struct {
 static i2c_priv_t s_i2c_priv_pool[I2C_PRIV_POOL_SIZE];
 static uint8_t s_i2c_priv_used[I2C_PRIV_POOL_SIZE];
 
-static int i2c_fops_ioctl(device_t* dev, int cmd, void* arg)
+static int i2c_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     i2c_priv_t* priv = (i2c_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
@@ -239,16 +241,10 @@ static int i2c_probe(device_t* dev)
         return -1;
     }
 
-    i2c_priv_t* priv = NULL;
-    for (int i = 0; i < I2C_PRIV_POOL_SIZE; i++) {
-        if (!s_i2c_priv_used[i]) {
-            s_i2c_priv_used[i] = 1;
-            priv = &s_i2c_priv_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return VFS_ERR_NOMEM;
+    int pool_idx = osal_pool_claim(s_i2c_priv_used, I2C_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    i2c_priv_t* priv = &s_i2c_priv_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     hal_i2c_config_t cfg = {
         .sda_pin = sda,
@@ -269,7 +265,7 @@ static int i2c_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < I2C_PRIV_POOL_SIZE; i++) { if (&s_i2c_priv_pool[i] == priv) { s_i2c_priv_used[i] = 0; break; } }
+    osal_pool_release(s_i2c_priv_used, I2C_PRIV_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -278,7 +274,7 @@ static int i2c_remove(device_t* dev)
     i2c_priv_t* priv = (i2c_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->bus.deinit(&priv->bus);
-        for (int i = 0; i < I2C_PRIV_POOL_SIZE; i++) { if (&s_i2c_priv_pool[i] == priv) { s_i2c_priv_used[i] = 0; break; } }
+        for (int i = 0; i < I2C_PRIV_POOL_SIZE; i++) { if (&s_i2c_priv_pool[i] == priv) { osal_pool_release(s_i2c_priv_used, I2C_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

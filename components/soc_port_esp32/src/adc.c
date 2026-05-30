@@ -54,8 +54,9 @@ static int adc_config_channel_once(adc_priv_t* priv, int channel, int atten, int
     return 0;
 }
 
-static int adc_ioctl(device_t* dev, int cmd, void* arg)
+static int adc_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     adc_priv_t* priv = (adc_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
 
@@ -69,6 +70,10 @@ static int adc_ioctl(device_t* dev, int cmd, void* arg)
         esp_err_t err = adc_oneshot_read(priv->handle, a->channel, a->out_raw);
         return (err == ESP_OK) ? 0 : (err == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
     }
+    case ADC_CMD_STOP:
+        /* oneshot 模式无连续转换, 仅作为安全关闭信号 */
+        return 0;
+
     default:
         return -1;
     }
@@ -84,16 +89,10 @@ static int adc_probe(device_t* dev)
     device_get_prop_int(dev, "unit", &unit);
     device_get_prop_int(dev, "reg", &unit);
 
-    adc_priv_t* priv = NULL;
-    for (int i = 0; i < ADC_PRIV_POOL_SIZE; i++) {
-        if (!s_adc_used[i]) {
-            s_adc_used[i] = 1;
-            priv = &s_adc_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return VFS_ERR_NOMEM;
+    int pool_idx = osal_pool_claim(s_adc_used, ADC_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    adc_priv_t* priv = &s_adc_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     int ret = 0;
     adc_oneshot_unit_init_cfg_t unit_cfg = {
@@ -112,7 +111,7 @@ static int adc_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < ADC_PRIV_POOL_SIZE; i++) { if (&s_adc_pool[i] == priv) { s_adc_used[i] = 0; break; } }
+    osal_pool_release(s_adc_used, ADC_PRIV_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -121,7 +120,7 @@ static int adc_remove(device_t* dev)
     adc_priv_t* priv = (adc_priv_t*)device_get_priv(dev);
     if (priv) {
         adc_oneshot_del_unit(priv->handle);
-        for (int i = 0; i < ADC_PRIV_POOL_SIZE; i++) { if (&s_adc_pool[i] == priv) { s_adc_used[i] = 0; break; } }
+        for (int i = 0; i < ADC_PRIV_POOL_SIZE; i++) { if (&s_adc_pool[i] == priv) { osal_pool_release(s_adc_used, ADC_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

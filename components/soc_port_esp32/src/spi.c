@@ -6,6 +6,7 @@
 #include <string.h>
 
 static const char* kTag = "hal_spi_bus";
+#define SPI_LOCK_TIMEOUT_MS OSAL_LOCK_TIMEOUT_DEFAULT_MS
 
 typedef struct {
     spi_host_device_t host;
@@ -33,19 +34,13 @@ static int spi_init_impl(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg
         return -1;
     }
 
-    hal_spi_impl_t* impl = NULL;
-    for (int i = 0; i < SPI_IMPL_POOL_SIZE; i++) {
-        if (!s_spi_used[i]) {
-            s_spi_used[i] = 1;
-            impl = &s_spi_pool[i];
-            memset(impl, 0, sizeof(*impl));
-            break;
-        }
-    }
-    if (!impl) {
+    int impl_idx = osal_pool_claim(s_spi_used, SPI_IMPL_POOL_SIZE);
+    if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
+    hal_spi_impl_t* impl = &s_spi_pool[impl_idx];
+    memset(impl, 0, sizeof(*impl));
 
     int ret = 0;
     impl->host = spi_host_from_id(bus_cfg->host_id);
@@ -94,9 +89,7 @@ err_bus:
 err_mutex:
     osal_mutex_destroy(impl->lock);
 err_pool:
-    for (int i = 0; i < SPI_IMPL_POOL_SIZE; i++) {
-        if (&s_spi_pool[i] == impl) { s_spi_used[i] = 0; break; }
-    }
+    osal_pool_release(s_spi_used, SPI_IMPL_POOL_SIZE, impl_idx);
     return ret;
 }
 
@@ -108,8 +101,8 @@ static int spi_write_impl(hal_spi_bus_t* bus, const uint8_t* data, size_t len)
 
     hal_spi_impl_t* impl = (hal_spi_impl_t*)bus->_impl;
 
-    if (len > impl->max_transfer_sz || len > (SIZE_MAX / 8U)) return -1;
-    if (osal_mutex_lock(impl->lock, OSAL_WAIT_FOREVER) != 0) return -1;
+    if (len > impl->max_transfer_sz || len > (SIZE_MAX / 8U)) return VFS_ERR_INVAL;
+    if (osal_mutex_lock(impl->lock, SPI_LOCK_TIMEOUT_MS) != 0) return VFS_ERR_BUSY;
 
     spi_transaction_t trans = {
         .length = len * 8U,
@@ -132,8 +125,8 @@ static int spi_read_impl(hal_spi_bus_t* bus, uint8_t* data, size_t len)
 
     hal_spi_impl_t* impl = (hal_spi_impl_t*)bus->_impl;
 
-    if (len > impl->max_transfer_sz || len > (SIZE_MAX / 8U)) return -1;
-    if (osal_mutex_lock(impl->lock, OSAL_WAIT_FOREVER) != 0) return -1;
+    if (len > impl->max_transfer_sz || len > (SIZE_MAX / 8U)) return VFS_ERR_INVAL;
+    if (osal_mutex_lock(impl->lock, SPI_LOCK_TIMEOUT_MS) != 0) return VFS_ERR_BUSY;
 
     spi_transaction_t trans = {
         .length = len * 8U,
@@ -159,7 +152,7 @@ static int spi_deinit_impl(hal_spi_bus_t* bus)
     spi_bus_remove_device(impl->dev);
     spi_bus_free(impl->host);
     osal_mutex_destroy(impl->lock);
-    for (int i = 0; i < SPI_IMPL_POOL_SIZE; i++) { if (&s_spi_pool[i] == impl) { s_spi_used[i] = 0; break; } }
+    for (int i = 0; i < SPI_IMPL_POOL_SIZE; i++) { if (&s_spi_pool[i] == impl) { osal_pool_release(s_spi_used, SPI_IMPL_POOL_SIZE, i); break; } }
     bus->_impl = NULL;
     return 0;
 }
@@ -191,8 +184,9 @@ static int spi_fops_write(device_t* dev, const void* buffer, size_t len)
     return priv->bus.write(&priv->bus, (const uint8_t*)buffer, len);
 }
 
-static int spi_fops_ioctl(device_t* dev, int cmd, void* arg)
+static int spi_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
@@ -231,16 +225,10 @@ static int spi_probe(device_t* dev)
         return -1;
     }
 
-    spi_priv_t* priv = NULL;
-    for (int i = 0; i < SPI_PRIV_POOL_SIZE; i++) {
-        if (!s_spi_priv_used[i]) {
-            s_spi_priv_used[i] = 1;
-            priv = &s_spi_priv_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return VFS_ERR_NOMEM;
+    int pool_idx = osal_pool_claim(s_spi_priv_used, SPI_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    spi_priv_t* priv = &s_spi_priv_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     hal_spi_bus_config_t bus_cfg = {
         .host_id = host,
@@ -264,9 +252,7 @@ static int spi_probe(device_t* dev)
     return 0;
 
 err_pool:
-    for (int i = 0; i < SPI_PRIV_POOL_SIZE; i++) {
-        if (&s_spi_priv_pool[i] == priv) { s_spi_priv_used[i] = 0; break; }
-    }
+    osal_pool_release(s_spi_priv_used, SPI_PRIV_POOL_SIZE, pool_idx);
     return ret;
 }
 
@@ -275,7 +261,7 @@ static int spi_remove(device_t* dev)
     spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->bus.deinit(&priv->bus);
-        for (int i = 0; i < SPI_PRIV_POOL_SIZE; i++) { if (&s_spi_priv_pool[i] == priv) { s_spi_priv_used[i] = 0; break; } }
+        for (int i = 0; i < SPI_PRIV_POOL_SIZE; i++) { if (&s_spi_priv_pool[i] == priv) { osal_pool_release(s_spi_priv_used, SPI_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

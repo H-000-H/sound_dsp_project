@@ -35,7 +35,7 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
             .x = area->x1, .y = area->y1, .w = w, .h = h,
             .pixels = (const uint16_t*)px_map
         };
-        device_ioctl(s_lcd_dev, ST7789_CMD_WRITE_RAM, &arg);
+        device_ioctl(s_lcd_dev, ST7789_CMD_WRITE_RAM, &arg, sizeof(arg));
     }
     lv_disp_flush_ready(disp);
 }

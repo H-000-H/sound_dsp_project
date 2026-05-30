@@ -15,8 +15,9 @@ typedef struct {
 static pwm_bl_priv_t s_pwm_priv_pool[PWM_PRIV_POOL_SIZE];
 static uint8_t s_pwm_priv_used[PWM_PRIV_POOL_SIZE];
 
-static int pwm_bl_ioctl(device_t* dev, int cmd, void* arg)
+static int pwm_bl_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
+    (void)arg_len;
     pwm_bl_priv_t* priv = (pwm_bl_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
 
@@ -54,21 +55,15 @@ static int pwm_bl_probe(device_t* dev)
         return -1;
     }
 
-    pwm_bl_priv_t* priv = NULL;
-    for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) {
-        if (!s_pwm_priv_used[i]) {
-            s_pwm_priv_used[i] = 1;
-            priv = &s_pwm_priv_pool[i];
-            memset(priv, 0, sizeof(*priv));
-            break;
-        }
-    }
-    if (!priv) return VFS_ERR_NOMEM;
+    int pool_idx = osal_pool_claim(s_pwm_priv_used, PWM_PRIV_POOL_SIZE);
+    if (pool_idx < 0) return VFS_ERR_NOMEM;
+    pwm_bl_priv_t* priv = &s_pwm_priv_pool[pool_idx];
+    memset(priv, 0, sizeof(*priv));
 
     hal_pwm_init_struct(&priv->pwm);
     int ret = priv->pwm.init(&priv->pwm, pin, freq, res);
     if (ret != 0) {
-        for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) { if (&s_pwm_priv_pool[i] == priv) { s_pwm_priv_used[i] = 0; break; } }
+        osal_pool_release(s_pwm_priv_used, PWM_PRIV_POOL_SIZE, pool_idx);
         return ret;
     }
 
@@ -82,8 +77,10 @@ static int pwm_bl_remove(device_t* dev)
 {
     pwm_bl_priv_t* priv = (pwm_bl_priv_t*)device_get_priv(dev);
     if (priv) {
+        uint32_t safe_duty = 0;
+        (void)priv->pwm.set_duty(&priv->pwm, safe_duty);
         priv->pwm.deinit(&priv->pwm);
-        for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) { if (&s_pwm_priv_pool[i] == priv) { s_pwm_priv_used[i] = 0; break; } }
+        for (int i = 0; i < PWM_PRIV_POOL_SIZE; i++) { if (&s_pwm_priv_pool[i] == priv) { osal_pool_release(s_pwm_priv_used, PWM_PRIV_POOL_SIZE, i); break; } }
         device_set_priv(dev, NULL);
     }
     return 0;

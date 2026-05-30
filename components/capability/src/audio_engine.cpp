@@ -53,14 +53,14 @@ static int eng_set_enable(audio_engine_t* eng, int enable)
 {
     if (!eng || !eng->_impl) return -1;
     audio_engine_impl_t* impl = (audio_engine_impl_t*)eng->_impl;
-    return device_ioctl(impl->amp_dev, MAX98357A_CMD_SET_ENABLE, &enable);
+    return device_ioctl(impl->amp_dev, MAX98357A_CMD_SET_ENABLE, &enable, sizeof(enable));
 }
 
 static void eng_deinit(audio_engine_t* eng)
 {
     if (!eng || !eng->_impl) return;
     audio_engine_impl_t* impl = (audio_engine_impl_t*)eng->_impl;
-    if (impl->amp_dev) { int v = 0; device_ioctl(impl->amp_dev, MAX98357A_CMD_SET_ENABLE, &v); }
+    if (impl->amp_dev) { int v = 0; device_ioctl(impl->amp_dev, MAX98357A_CMD_SET_ENABLE, &v, sizeof(v)); }
     free(impl);
     eng->_impl = NULL;
 }
