@@ -119,13 +119,12 @@ static int light_sensor_read(device_t* dev, int* value)
 
 static int light_sensor_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
 {
-    (void)arg_len;
     light_sensor_priv_t* priv = (light_sensor_priv_t*)device_get_priv(dev);
     if (priv && priv->magic != LIGHT_SENSOR_MAGIC) return VFS_ERR_INVAL;
 
     switch (cmd) {
     case LIGHT_SENSOR_CMD_READ: {
-        if (!arg) return VFS_ERR_INVAL;
+        if (!arg || arg_len < sizeof(light_sensor_read_arg_t)) return VFS_ERR_INVAL;
         light_sensor_read_arg_t* a = (light_sensor_read_arg_t*)arg;
         if (a->magic != LIGHT_SENSOR_READ_MAGIC) return VFS_ERR_INVAL;
         return light_sensor_read(dev, &a->value);
