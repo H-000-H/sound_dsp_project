@@ -49,6 +49,22 @@ device_t* device_get_phandle_dev(const device_t* dev, const char* key)
     return device_find_by_label(val);
 }
 
+device_t* device_find_by_id(device_id_t id)
+{
+    return board_dev_get(id);
+}
+
+device_t* device_find_by_path(const char* path)
+{
+    if (!path) return NULL;
+    for (int i = 0; i < DEV_ID_COUNT; i++) {
+        const device_node_t* node = board_node_get((device_id_t)i);
+        if (node && node->path && strcmp(node->path, path) == 0)
+            return board_dev_get((device_id_t)i);
+    }
+    return NULL;
+}
+
 device_t* device_find_by_compatible(const char* compatible)
 {
     device_id_t id = board_dev_find_by_compat(compatible);

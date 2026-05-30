@@ -51,13 +51,5 @@ add_dependencies(${COMPONENT_LIB} board_dts_generate)
 
 target_sources(${COMPONENT_LIB} PRIVATE ${GENERATED_BOARD_SRCS})
 set_source_files_properties(${GENERATED_BOARD_SRCS} PROPERTIES GENERATED TRUE)
-target_link_options(${COMPONENT_LIB} INTERFACE
-    "-u board_driver_probe_light_sensor"
-    "-u board_driver_probe_pwm_bl"
-    "-u board_driver_probe_gpio"
-    "-u board_driver_probe_i2c"
-    "-u board_driver_probe_spi"
-    "-u board_driver_probe_i2s"
-    "-u board_driver_probe_uart"
-    "-u board_driver_probe_rmt_led"
-)
+# -u flags moved to root CMakeLists.txt with BEFORE scope
+# (INTERFACE appends after .a files, ld -u must precede archives)

@@ -37,6 +37,7 @@ typedef struct device_node
     const char*         name;
     const char*         label;          /* DTS label (如 pwm_backlight) */
     const char*         compatible;
+    const char*         path;           /* DTS 全路径 (如 /soc/spi2@0) */
     const device_prop_t* props;
     const device_id_t*  deps;
     uint8_t             status;         /* 编译期默认状态 */
@@ -68,6 +69,8 @@ typedef struct device_instance
 device_t* device_find(const char* name);
 device_t* device_find_by_label(const char* label);
 device_t* device_find_by_compatible(const char* compatible);
+device_t* device_find_by_id(device_id_t id);
+device_t* device_find_by_path(const char* path);
 device_t* device_get_parent(const device_t* dev);
 
 /* ── 从属性中解析 phandle 引用并返回目标设备 ── */

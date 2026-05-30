@@ -463,6 +463,22 @@ class DtsParser:
         while self.peek() and self.peek().type != TOKEN_RBRACE:
             t = self.peek()
 
+            if t.type == TOKEN_POUND:
+                # #address-cells / #size-cells — # 是属性名的一部分
+                self.advance()  # #
+                if self.peek() and self.peek().type == TOKEN_IDENT:
+                    ident = "#" + self.advance().value
+                    if self.peek() and self.peek().type == TOKEN_EQ:
+                        self.advance()  # =
+                        prop = DtsProperty(ident, line=t.line)
+                        self.parse_prop_value(prop)
+                        node.props.append(prop)
+                    else:
+                        prop = DtsProperty(ident, line=t.line)
+                        prop.strings = ["true"]
+                        node.props.append(prop)
+                continue
+
             if t.type == TOKEN_IDENT:
                 # 可能是属性或子节点
                 ident = t.value
@@ -601,6 +617,22 @@ class DtsParser:
             return
 
         t = self.peek()
+
+        if t.type == TOKEN_POUND:
+            # #address-cells / #size-cells
+            self.advance()
+            if self.peek() and self.peek().type == TOKEN_IDENT:
+                ident = "#" + self.advance().value
+                if self.peek() and self.peek().type == TOKEN_EQ:
+                    self.advance()
+                    prop = DtsProperty(ident, line=t.line)
+                    self.parse_prop_value(prop)
+                    parent.props.append(prop)
+                else:
+                    prop = DtsProperty(ident, line=t.line)
+                    prop.strings = ["true"]
+                    parent.props.append(prop)
+            return
 
         if t.type == TOKEN_IDENT:
             ident = t.value
@@ -1205,6 +1237,7 @@ class CGenerator:
                 f'        .name       = "{dev.name}",\n'
                 f'        .label      = "{label_val}",\n'
                 f'        .compatible = "{compat_str}",\n'
+                f'        .path       = "{dev.path}",\n'
                 f'        .status     = {status_val},\n'
                 f'        .prop_count = {len([p for p in dev.props if p.name not in ("compatible", "depends-on", "depends_on", "status")])},\n'
                 f'        .props      = {prop_ref},\n'
