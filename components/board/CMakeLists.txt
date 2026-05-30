@@ -36,7 +36,7 @@ add_custom_command(
     OUTPUT
         ${GENERATED_BOARD_SRCS}
         ${GENERATED_BOARD_HDRS}
-    COMMAND ${Python3_EXECUTABLE} "${DTC_LITE}" "${BOARD_DTS}" "${GENERATED_BOARD_DIR}" "${CMAKE_SOURCE_DIR}/components/drivers"
+    COMMAND ${Python3_EXECUTABLE} "${DTC_LITE}" "${BOARD_DTS}" "${GENERATED_BOARD_DIR}" "${CMAKE_SOURCE_DIR}/components/drivers" "${CMAKE_SOURCE_DIR}/components/hw_hal/src"
     DEPENDS
         "${BOARD_DTS}"
         "${DTC_LITE}"
@@ -52,5 +52,12 @@ add_dependencies(${COMPONENT_LIB} board_dts_generate)
 target_sources(${COMPONENT_LIB} PRIVATE ${GENERATED_BOARD_SRCS})
 set_source_files_properties(${GENERATED_BOARD_SRCS} PROPERTIES GENERATED TRUE)
 target_link_options(${COMPONENT_LIB} INTERFACE
-    "-u" "board_driver_probe_light_sensor"
+    "-u board_driver_probe_light_sensor"
+    "-u board_driver_probe_pwm_bl"
+    "-u board_driver_probe_gpio"
+    "-u board_driver_probe_i2c"
+    "-u board_driver_probe_spi"
+    "-u board_driver_probe_i2s"
+    "-u board_driver_probe_uart"
+    "-u board_driver_probe_rmt_led"
 )

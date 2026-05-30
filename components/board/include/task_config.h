@@ -12,7 +12,7 @@ typedef struct
     const char* name;
     uint32_t stack_size;
     uint32_t priority;
-    int core_id;
+    int8_t core_id;
 } board_task_config_t;
 
 extern const board_task_config_t board_task_ui;

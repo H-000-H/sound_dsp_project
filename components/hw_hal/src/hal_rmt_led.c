@@ -152,3 +152,58 @@ void hal_rmt_led_init_struct(hal_rmt_led_t* led)
     led->off = rmt_led_off_impl;
     led->_impl = NULL;
 }
+
+/* ===== RMT 平台驱动层 ===== */
+#include "driver.h"
+
+typedef struct {
+    hal_rmt_led_t led;
+} rmt_led_priv_t;
+
+static int8_t rmt_fops_ioctl(device_t* dev, int cmd, void* arg)
+{
+    rmt_led_priv_t* priv = (rmt_led_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    switch (cmd) {
+    case RMT_CMD_SET_RGB: {
+        rmt_rgb_arg_t* a = (rmt_rgb_arg_t*)arg;
+        return priv->led.set_rgb(&priv->led, a->r, a->g, a->b);
+    }
+    case RMT_CMD_SET_BRIGHT:
+        if (!arg) return -1;
+        return priv->led.set_brightness(&priv->led, *(uint8_t*)arg);
+    case RMT_CMD_OFF:
+        return priv->led.off(&priv->led);
+    default:
+        return -1;
+    }
+}
+
+static const file_operation_t rmt_fops = {
+    .ioctl = rmt_fops_ioctl,
+};
+
+static int rmt_led_probe(device_t* dev)
+{
+    rmt_led_priv_t* priv = (rmt_led_priv_t*)calloc(1, sizeof(rmt_led_priv_t));
+    if (!priv) return -1;
+
+    hal_rmt_led_init_struct(&priv->led);
+    device_set_priv(dev, priv);
+    dev->ops = &rmt_fops;
+    ESP_LOGI(kTag, "RMT LED platform driver probed");
+    return 0;
+}
+
+static int rmt_led_remove(device_t* dev)
+{
+    rmt_led_priv_t* priv = (rmt_led_priv_t*)device_get_priv(dev);
+    if (priv) {
+        priv->led.off(&priv->led);
+        free(priv);
+        device_set_priv(dev, NULL);
+    }
+    return 0;
+}
+
+DRIVER_REGISTER(rmt_led, "esp32,rmt-tx", rmt_led_probe, rmt_led_remove);

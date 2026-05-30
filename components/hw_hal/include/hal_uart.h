@@ -31,6 +31,17 @@ struct hal_uart {
 
 void hal_uart_init_struct(hal_uart_t* uart);
 
+/* ── ioctl 命令 (平台驱动模式) ── */
+#define UART_CMD_READ       0x30  /* arg: uart_read_arg_t* */
+#define UART_CMD_DEINIT     0x31  /* arg: NULL */
+#define UART_CMD_SET_BAUD   0x32  /* arg: int* (new baud rate) */
+
+typedef struct {
+    uint8_t* data;
+    size_t len;
+    uint32_t timeout_ms;
+} uart_read_arg_t;
+
 #ifdef __cplusplus
 }
 #endif

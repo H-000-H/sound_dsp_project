@@ -109,3 +109,92 @@ void hal_uart_init_struct(hal_uart_t* uart)
     uart->deinit = uart_deinit_impl;
     uart->_impl = NULL;
 }
+
+/* ===== UART 平台驱动层 ===== */
+#include "driver.h"
+
+typedef struct {
+    hal_uart_t uart;
+    hal_uart_config_t cfg;
+} uart_priv_t;
+
+static int8_t uart_fops_write(device_t* dev, const void* buffer, size_t len)
+{
+    uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    return priv->uart.write(&priv->uart, (const uint8_t*)buffer, len);
+}
+
+static int8_t uart_fops_ioctl(device_t* dev, int cmd, void* arg)
+{
+    uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    switch (cmd) {
+    case UART_CMD_READ: {
+        uart_read_arg_t* a = (uart_read_arg_t*)arg;
+        return priv->uart.read(&priv->uart, a->data, a->len, a->timeout_ms);
+    }
+    case UART_CMD_DEINIT: {
+        int ret = priv->uart.deinit(&priv->uart);
+        free(priv);
+        device_set_priv(dev, NULL);
+        return ret;
+    }
+    case UART_CMD_SET_BAUD: {
+        if (!arg) return -1;
+        priv->uart.deinit(&priv->uart);
+        priv->cfg.baud_rate = *(int*)arg;
+        return priv->uart.init(&priv->uart, &priv->cfg);
+    }
+    default:
+        return -1;
+    }
+}
+
+static const file_operation_t uart_fops = {
+    .write = uart_fops_write,
+    .ioctl = uart_fops_ioctl,
+};
+
+static int uart_probe(device_t* dev)
+{
+    int tx = 43, rx = 44, baud = 115200, data_bits = 8, stop_bits = 1, parity = 0;
+    device_get_prop_int(dev, "tx_pin", &tx);
+    device_get_prop_int(dev, "rx_pin", &rx);
+    device_get_prop_int(dev, "baud_rate", &baud);
+    device_get_prop_int(dev, "data_bits", &data_bits);
+    device_get_prop_int(dev, "stop_bits", &stop_bits);
+    device_get_prop_int(dev, "parity", &parity);
+
+    uart_priv_t* priv = (uart_priv_t*)calloc(1, sizeof(uart_priv_t));
+    if (!priv) return -1;
+
+    priv->cfg.tx_pin = tx; priv->cfg.rx_pin = rx;
+    priv->cfg.rts_pin = -1; priv->cfg.cts_pin = -1;
+    priv->cfg.baud_rate = baud;
+    priv->cfg.data_bits = data_bits;
+    priv->cfg.stop_bits = stop_bits;
+    priv->cfg.parity = parity;
+
+    hal_uart_init_struct(&priv->uart);
+    int ret = priv->uart.init(&priv->uart, &priv->cfg);
+    if (ret != 0) { free(priv); return ret; }
+
+    device_set_priv(dev, priv);
+    dev->ops = &uart_fops;
+    ESP_LOGI(kTag, "UART probed: TX=%d RX=%d baud=%d", tx, rx, baud);
+    return 0;
+}
+
+static int uart_remove(device_t* dev)
+{
+    uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
+    if (priv) {
+        priv->uart.deinit(&priv->uart);
+        free(priv);
+        device_set_priv(dev, NULL);
+    }
+    return 0;
+}
+
+DRIVER_REGISTER(uart, "esp32,uart", uart_probe, uart_remove);

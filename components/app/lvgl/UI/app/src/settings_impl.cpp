@@ -1,6 +1,6 @@
 #include "settings_app.hpp"
+#include "st7789_driver.h"
 #include "device.h"
-#include "hal_pwm.h"
 #include "thingscloud_app.hpp"
 #include "mqtt_client.hpp"
 #include "ui/screen/inc/status_bar.hpp"
@@ -42,23 +42,12 @@ void SettingsImpl::on_mqtt_toggle(bool on)
 
 void SettingsImpl::on_brightness(int val)
 {
-    static hal_pwm_channel_t s_pwm;
-    static bool s_pwm_inited = false;
-
-    if (!s_pwm_inited)
-    {
-        hal_pwm_init_struct(&s_pwm);
-
-        int pin = 15; /* fallback */
-        device_t* dev = device_find("lcd0");
-        if (dev) device_get_prop_int(dev, "backlight", &pin);
-
-        s_pwm.init(&s_pwm, pin, 5000, 10);
-        s_pwm_inited = true;
+    /* 通过 ST7789 驱动调节背光 (驱动内部调 PWM 或 GPIO) */
+    device_t* lcd = device_find("lcd0");
+    if (lcd) {
+        uint8_t brightness = (uint8_t)(val * 255 / 100);
+        device_ioctl(lcd, ST7789_CMD_SET_BACKLIGHT, &brightness);
     }
-
-    uint32_t duty = (val * 1023) / 100; /* 10-bit resolution */
-    s_pwm.set_duty(&s_pwm, duty);
 }
 
 void SettingsImpl::on_low_power(bool on)

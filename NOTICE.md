@@ -448,8 +448,9 @@ target_link_options(${COMPONENT_LIB} INTERFACE
 ### 19.6 其他尝试的误区
 
 - **`target_link_options(PRIVATE ...)`**：之前认为 PRIVATE 不传播到最终链接，实际 ESP-IDF 里组件静态库的 PRIVATE 链接选项也会出现在最终 elf 的 LINK_FLAGS 中。所以 PRIVATE/INTERFACE 不是根因。
-- **`"-u board_driver_probe_light_sensor"` 合在一个引号里**：CMake 会将整个带空格的字符串作为单个参数传给链接器。链接器无法正确解析 `" -u board_driver_probe_light_sensor"` 为一个参数，导致 `-u` 不生效。必须分两个参数 `"-u" "board_driver_probe_light_sensor"`。
-- 两个错误叠加导致 `-u` 实际没传进链接器，所以链接失败。
+- **`"-u" "board_driver_probe_xxx"` 写成两个参数**：早期认为必须分开，实际 Ninja generator 处理 `target_link_options(INTERFACE)` 时，组合格式 `"-u board_driver_probe_xxx"` 也能正确展开为 `-u` + sym。两种格式均可，**组合格式更简洁**。
+- **`target_link_options(PRIVATE ...)` 不传播**：之前认为 PRIVATE 不传播到最终链接，实际 ESP-IDF 里组件静态库的 PRIVATE 链接选项也会出现在最终 elf 的 LINK_FLAGS 中。所以 PRIVATE/INTERFACE 不是根因。
+- 旧分析称"两个错误叠加"是错的。实际上两种 `-u` 写法都有效，根因是之前 `-u` 完全没加进 CMakeLists.txt。
 
 ---
 
@@ -495,3 +496,108 @@ target_link_options(${COMPONENT_LIB} INTERFACE
 - 同步兼容：MusicImpl 若不同步调用 `set_state()`，状态机在钩子返回后自动 fallback 到 `kPlaying`
 - 日志可见：所有状态转移都打 `ESP_LOGI`，非法转移打 `ESP_LOGW`
 - 序列化和 settings_app 的 UI 层未引入状态机，因其操作是纯同步的，状态机无实际收益
+
+---
+
+## 21. ⚠️ ESP-IDF v5.5 MSYS2/Mingw 不支持
+
+> 2026-05-30 · idf.py 在 MSYS2 bash 下直接退出，不执行构建
+
+### 21.1 现象
+
+```bash
+$ idf.py build
+MSys/Mingw is no longer supported. Please follow the getting started guide...
+```
+
+`idf.py` 输出一条警告后直接退出，不执行任何构建操作。即使 `export.sh` 已 source 成功、环境变量已设置，也无法构建。
+
+### 21.2 根因
+
+ESP-IDF v5.5 在 `tools/idf.py` 末尾显式检测 `MSYSTEM` 环境变量（约 914 行）：
+
+```python
+if 'MSYSTEM' in os.environ:
+    print_warning('MSys/Mingw is no longer supported...')
+    # 注意：这里没有调用 main()，直接 fallthrough 到退出
+```
+
+当 `MSYSTEM` 存在时只打警告**不调 `main()`**，而 MSYS2 bash 都会设 `MSYSTEM=MINGW64`，且 `unset MSYSTEM` 对子进程不生效（shell 重新导出）。
+
+### 21.3 解法
+
+**方案 A — 打补丁（临时构建）**：在 `elif` 前加 `main()`：
+
+```python
+if 'MSYSTEM' in os.environ:
+    print_warning(...)
+    main()          # <-- 加这一行
+elif os.name == 'posix' ...
+```
+
+**方案 B — 从 cmd.exe/PowerShell 启动**：ESP-IDF v5.5 只在 MSYS2 下拒绝，从 Windows 原生 cmd.exe 运行 `python idf.py build` 正常。
+
+**方案 C — 用 `build.bat`**：`tools/run_build.bat` 直接调用 cmd.exe + 指定 Python 环境 + 框架路径，绕过 MSYS 检测。
+
+### 21.4 注意
+
+- `idf.py` 中的 MSYS 检查是硬编码的，`export.sh` source 成功后也会触发
+- 其他 ESP-IDF v5.5 工具（`idf_tools.py`、`esptool.py`）也有类似检查
+- 方案 A 修改后记得恢复，不要提交
+
+---
+
+## 22. hw_hal 全量 Linux Platform Driver 化
+
+> 2026-05-30 · 6 个 hw_hal 模块 + 3 个消费者重构 + 内存微优化
+
+### 22.1 背景
+
+原有的 hw_hal 层虽然是函数指针表封装（`hal_spi_bus_t`、`hal_i2c_bus_t` 等），但上层代码仍然直接调用 `hal_xxx_init()` / `hal_xxx_write()`。驱动通过 `DRIVER_REGISTER` 注册后，probe 阶段初始化 hw_hal，上层通过 `device_find()` + `device_write()` / `device_ioctl()` 操作硬件，不再直接调 hw_hal 函数。
+
+### 22.2 新增 Platform Driver 一览
+
+| 模块 | compatible | 文件 |
+|------|-----------|------|
+| GPIO 控制器 | `esp32,gpio` | `hal_gpio.c` |
+| I2C 总线 | `esp32,i2c-bus` | `hal_i2c.c` |
+| SPI 总线 | `esp32,spi-bus` | `hal_spi_bus.c` |
+| I2S 总线 | `esp32,i2s-bus` | `hal_i2s_bus.c` |
+| UART | `esp32,uart` | `hal_uart.c` |
+| RMT LED (WS2812) | `esp32,rmt-tx` | `hal_rmt_led.c` |
+
+每个 driver 结构：
+- `probe()` — 从 DTS 读属性，初始化 hw_hal 实例，设 `dev->ops`
+- `remove()` — deinit + free priv
+- `fops` — `file_operation_t` 静态表，含 `.write` / `.ioctl`
+- ioctl cmds 定义在对应 `hal_xxx.h` 头文件中
+
+### 22.3 消费者重构
+
+| 文件 | 改前 | 改后 |
+|------|------|------|
+| `st7789_driver.c` | `hal_spi_bus_t spi` 直接调用 | `device_t* spi_dev` → `device_write()` |
+| `mp3.cpp` | `hal_i2s_bus_t s_i2s` 直接调用 | `device_t* s_i2s_dev` → `device_write()` |
+| `serial/impl.cpp` | `hal_uart_t s_uart` 直接调用 | `device_t* s_uart_dev` → `device_ioctl()` |
+
+### 22.4 构建系统变更
+
+- **CMakeLists.txt** — 新增 6 个 `-u` 标志（`-u board_driver_probe_xxx`）
+- **board_force_link.c** — 新增 6 个 driver probe 的 extern + 伪引用
+- **board.dts** — 新增 `gpio`、`i2c0`、`rmt` 节点；`spi2` 增加 `clock_speed_hz` / `cs_pin`
+- **dtc-lite.py** — PLATFORM 集合从全量 cleaned 到仅保留 `esp32,cpu`
+
+### 22.5 内存微优化
+
+| 结构体 | 字段变更 | 效果 |
+|--------|---------|------|
+| `device_node_t` | `status`/`prop_count`/`dep_count` `int`→`uint8_t`，字段重排 | -8 bytes/节点 ≈ -160 bytes .rodata |
+| `board_driver.c` | `ok`/`fail` `int`→`uint8_t` | -6 bytes stack |
+| `task_config.h` | `core_id` `int`→`int8_t` | -6 bytes .data |
+
+### 22.6 注意
+
+- **PCI-style probe 注册**：probe 阶段使能硬件，上层只通过 `device_find()` + `device_ioctl()` 访问，主逻辑不再直接包含 ESP-IDF API
+- **`-u` 标志格式**：`target_link_options(INTERFACE "-u board_driver_probe_xxx")` 组合字符串格式在 Ninja generator 下正常工作
+- **Xo肩肿 align**：`device_node_t` 重排后 3 个 `uint8_t` 放在末尾，编译器自动填充到 4 字节边界，结构体从 32→24 字节
+- **不要改 VFS 包装**：`device_write()` / `device_ioctl()` 返回值保持 `int`，因外部调用者赋值给 `int`，改 `int8_t` 会产生大量 -Wsign-conversion 警告

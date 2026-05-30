@@ -2,7 +2,7 @@
 
 #include "driver.h"
 #include "hal_gpio.h"
-#include "hal_spi_bus.h"
+#include "hal_pwm.h"
 #include "esp_log.h"
 #include <stdlib.h>
 #include <string.h>
@@ -21,12 +21,13 @@ static const char* kTag = "st7789";
 #define CMD_NORON      0x13
 
 /* ── 驱动私有数据 ── */
-typedef struct 
+typedef struct
 {
-    hal_spi_bus_t    spi;         /* SPI bus 实例 */
+    device_t*       spi_dev;     /* SPI 总线设备 (来自 phandle) */
     hal_gpio_config_t   gpio_dc;
     hal_gpio_config_t   gpio_rst;
-    int             bl_pin;
+    device_t*       bl_pwm_dev;  /* PWM 背光设备 (phandle 引用) */
+    int             bl_pin;      /* 回退: 二进制 GPIO 背光引脚 */
     int             bl_active_high;
     int             width;
     int             height;
@@ -38,13 +39,13 @@ typedef struct
 static void write_cmd(st7789_priv_t* priv, uint8_t cmd)
 {
     hal_gpio_set_level(priv->gpio_dc.pin, 0);   /* DC=0 → command */
-    priv->spi.write(&priv->spi, &cmd, 1);
+    device_write(priv->spi_dev, &cmd, 1);
 }
 
 static void write_data(st7789_priv_t* priv, const uint8_t* data, int len)
 {
     hal_gpio_set_level(priv->gpio_dc.pin, 1);   /* DC=1 → data */
-    priv->spi.write(&priv->spi, data, len);
+    device_write(priv->spi_dev, data, len);
 }
 
 static void write_data_byte(st7789_priv_t* priv, uint8_t data)
@@ -139,36 +140,37 @@ static const file_operation_t st7789_fops = {
 static int st7789_probe(device_t* dev)
 {
     /* 读取属性 */
-    int dc_pin = -1, rst_pin = -1, bl_pin = -1;
+    int dc_pin = -1, rst_pin = -1;
     int width = 240, height = 240, bl_active = 1;
-    int mosi = -1, sck = -1, freq = 80 * 1000 * 1000;
 
     device_get_prop_int(dev, "dc", &dc_pin);
     device_get_prop_int(dev, "reset", &rst_pin);
-    device_get_prop_int(dev, "backlight", &bl_pin);
     device_get_prop_int(dev, "width", &width);
     device_get_prop_int(dev, "height", &height);
     device_get_prop_int(dev, "bl_active_high", &bl_active);
-    device_get_prop_int(dev, "spi_freq_hz", &freq);
-
-    /* 从 parent SPI device 读引脚 */
-    device_t* parent = device_get_parent(dev);
-    if (parent) {
-        device_get_prop_int(parent, "mosi", &mosi);
-        device_get_prop_int(parent, "sclk", &sck);
-    }
-    if (mosi < 0 || sck < 0) {
-        ESP_LOGE(kTag, "missing SPI pin config");
-        return -1;
-    }
 
     st7789_priv_t* priv = (st7789_priv_t*)calloc(1, sizeof(st7789_priv_t));
     if (!priv) return -1;
 
     priv->width = width;
     priv->height = height;
-    priv->bl_pin = bl_pin;
+    priv->bl_pin = -1;
     priv->bl_active_high = bl_active;
+
+    /* 获取 SPI 总线设备 (parent = depends_on 第一项) */
+    priv->spi_dev = device_get_parent(dev);
+    if (!priv->spi_dev) {
+        ESP_LOGE(kTag, "missing SPI parent");
+        free(priv);
+        return -1;
+    }
+
+    /* 尝试 phandle 方式获取 PWM 背光设备 */
+    priv->bl_pwm_dev = device_get_phandle_dev(dev, "backlight");
+    if (!priv->bl_pwm_dev) {
+        /* 回退: 读取 GPIO 引脚号, 二进制控制 */
+        device_get_prop_int(dev, "backlight", &priv->bl_pin);
+    }
 
     /* ── 初始化 DC/RST GPIO ── */
     priv->gpio_dc.pin = dc_pin;
@@ -181,28 +183,10 @@ static int st7789_probe(device_t* dev)
         hal_gpio_init(&priv->gpio_rst);
     }
 
-    if (bl_pin >= 0) {
-        hal_gpio_config_t bl_cfg = { .pin = bl_pin, .mode = HAL_GPIO_MODE_OUTPUT };
+    /* GPIO 回退: 仅当没有 PWM 设备时才初始化背光引脚 */
+    if (!priv->bl_pwm_dev && priv->bl_pin >= 0) {
+        hal_gpio_config_t bl_cfg = { .pin = priv->bl_pin, .mode = HAL_GPIO_MODE_OUTPUT };
         hal_gpio_init(&bl_cfg);
-    }
-
-    /* ── 初始化 SPI bus ── */
-    hal_spi_bus_config_t bus_cfg = {
-        .mosi = mosi, .miso = -1, .sclk = sck,
-        .max_transfer_sz = width * height * 2 + 1024,
-        .dma_chan = -1,
-    };
-    hal_spi_device_config_t dev_cfg = {
-        .mode = 0, .clock_speed_hz = freq,
-        .cs_pin = -1,        /* 7-wire SPI, no CS */
-        .queue_size = 7,
-    };
-
-    hal_spi_bus_init_struct(&priv->spi);
-    int ret = priv->spi.init(&priv->spi, &bus_cfg, &dev_cfg);
-    if (ret != 0) {
-        free(priv);
-        return ret;
     }
 
     /* ── 硬件复位 ── */
@@ -219,14 +203,17 @@ static int st7789_probe(device_t* dev)
     write_cmd(priv, CMD_DISPON);  /* Display on */
 
     /* ── 点亮背光 ── */
-    if (bl_pin >= 0) {
-        hal_gpio_set_level(bl_pin, bl_active ? 1 : 0);
+    if (priv->bl_pwm_dev) {
+        uint32_t init_duty = priv->bl_active_high ? 1023 : 0;
+        device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &init_duty);
+    } else if (priv->bl_pin >= 0) {
+        hal_gpio_set_level(priv->bl_pin, priv->bl_active_high ? 1 : 0);
     }
 
     device_set_priv(dev, priv);
     dev->ops = &st7789_fops;
-    ESP_LOGI(kTag, "probed: %dx%d ST7789 on SPI(MOSI=%d,SCK=%d,DC=%d,RST=%d)",
-             width, height, mosi, sck, dc_pin, rst_pin);
+    ESP_LOGI(kTag, "probed: %dx%d ST7789 (DC=%d,RST=%d)",
+             width, height, dc_pin, rst_pin);
     return 0;
 }
 
@@ -234,9 +221,8 @@ static int st7789_remove(device_t* dev)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
     if (priv) {
-        priv->spi.deinit(&priv->spi);
-        free(priv);
         device_set_priv(dev, NULL);
+        free(priv);
     }
     return 0;
 }
@@ -296,7 +282,7 @@ static int st7789_fill_rect(device_t* dev, int x, int y, int w, int h, uint16_t 
     }
 
     for (int i = 0; i < h; i++) {
-        priv->spi.write(&priv->spi, line_buf, w * 2);
+        device_write(priv->spi_dev, line_buf, w * 2);
     }
 
     free(line_buf);
@@ -318,17 +304,26 @@ static int st7789_draw_bitmap(device_t* dev, int x, int y, int w, int h, const u
     set_window(priv, x, y, w, h);
     write_cmd(priv, CMD_RAMWR);
     hal_gpio_set_level(priv->gpio_dc.pin, 1);
-    priv->spi.write(&priv->spi, data, w * h * 2);
+    device_write(priv->spi_dev, data, w * h * 2);
     return 0;
 }
 
 static int st7789_set_backlight(device_t* dev, uint8_t brightness)
 {
     st7789_priv_t* priv = (st7789_priv_t*)device_get_priv(dev);
-    if (!priv || priv->bl_pin < 0) return -1;
+    if (!priv) return -1;
 
-    hal_gpio_set_level(priv->bl_pin, (brightness > 0) == priv->bl_active_high ? 1 : 0);
-    return 0;
+    if (priv->bl_pwm_dev) {
+        /* PWM 背光: 将 0~255 映射到 10-bit 占空比 */
+        uint32_t duty = (uint32_t)brightness * 1023 / 255;
+        return device_ioctl(priv->bl_pwm_dev, PWM_CMD_SET_DUTY, &duty);
+    }
+
+    if (priv->bl_pin >= 0) {
+        hal_gpio_set_level(priv->bl_pin, (brightness > 0) == priv->bl_active_high ? 1 : 0);
+        return 0;
+    }
+    return -1;
 }
 
 static int st7789_write_ram(device_t* dev, int x, int y, int w, int h, const uint16_t* pixels)
@@ -339,7 +334,7 @@ static int st7789_write_ram(device_t* dev, int x, int y, int w, int h, const uin
     set_window(priv, x, y, w, h);
     write_cmd(priv, CMD_RAMWR);
     hal_gpio_set_level(priv->gpio_dc.pin, 1);
-    priv->spi.write(&priv->spi, (const uint8_t*)pixels, w * h * 2);
+    device_write(priv->spi_dev, (const uint8_t*)pixels, w * h * 2);
     return 0;
 }
 

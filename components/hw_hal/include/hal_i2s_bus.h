@@ -32,6 +32,17 @@ struct hal_i2s_bus
 
 void hal_i2s_bus_init_struct(hal_i2s_bus_t* bus);
 
+/* ── ioctl 命令 (平台驱动模式) ── */
+#define I2S_CMD_WRITE       0x50  /* arg: i2s_write_arg_t* */
+#define I2S_CMD_DEINIT      0x51  /* arg: NULL */
+
+typedef struct {
+    const int16_t* samples;
+    size_t bytes;
+    size_t* written;
+    uint32_t timeout_ms;
+} i2s_write_arg_t;
+
 #ifdef __cplusplus
 }
 #endif

@@ -35,9 +35,8 @@ int s_scroll_offset = 0;
 /* 跟踪上次渲染的环形状态，避免不必要的重绘 */
 static int s_last_rendered_head = -1;
 
-/* UART 句柄（替换旧的 SerialConsole） */
-static hal_uart_t s_uart;
-static bool s_uart_inited = false;
+/* UART 设备（通过 device_find 获取） */
+static device_t* s_uart_dev = nullptr;
 
 static int s_stored_count()
 {
@@ -120,10 +119,11 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
     if (lv_screen_active() != app->screen()) return;
 
     /* 从 UART 读取数据 -> s_stored */
-    if (s_uart_inited)
+    if (s_uart_dev)
     {
         uint8_t buf[256];
-        int n = s_uart.read(&s_uart, buf, sizeof(buf) - 1, 100);
+        uart_read_arg_t rarg = { .data = buf, .len = sizeof(buf) - 1, .timeout_ms = 100 };
+        int n = device_ioctl(s_uart_dev, UART_CMD_READ, &rarg);
         if (n > 0)
         {
             if (app->m_term_mode == 1)
@@ -243,37 +243,12 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
 
 static void uart_init_from_device(void)
 {
-    hal_uart_init_struct(&s_uart);
-
-    device_t* dev = device_find("uart_debug");
-
-    hal_uart_config_t cfg;
-    cfg.tx_pin     = 43;
-    cfg.rx_pin     = 44;
-    cfg.rts_pin    = -1;
-    cfg.cts_pin    = -1;
-    cfg.baud_rate  = 115200;
-    cfg.data_bits  = 8;
-    cfg.stop_bits  = 1;
-    cfg.parity     = 0;
-
-    if (dev)
-    {
-        device_get_prop_int(dev, "tx_pin",    &cfg.tx_pin);
-        device_get_prop_int(dev, "rx_pin",    &cfg.rx_pin);
-        device_get_prop_int(dev, "baud_rate", &cfg.baud_rate);
-        device_get_prop_int(dev, "data_bits", &cfg.data_bits);
-        device_get_prop_int(dev, "stop_bits", &cfg.stop_bits);
-        device_get_prop_int(dev, "parity",    &cfg.parity);
-    }
-
-    s_uart.init(&s_uart, &cfg);
-    s_uart_inited = true;
+    s_uart_dev = device_find("uart_debug");
 }
 
 void SerialImpl::start_serial()
 {
-    if (!s_uart_inited)
+    if (!s_uart_dev)
     {
         uart_init_from_device();
     }
@@ -281,16 +256,16 @@ void SerialImpl::start_serial()
     /* 挂钩 ESP-IDF 日志：原始输出路径不变，另捕获一份给屏幕 */
     s_orig_vprintf = esp_log_set_vprintf(log_vprintf);
 
-    m_connected = s_uart_inited;
+    m_connected = (s_uart_dev != nullptr);
     update_display();
 }
 
 void SerialImpl::stop_serial()
 {
-    if (s_uart_inited)
+    if (s_uart_dev)
     {
-        s_uart.deinit(&s_uart);
-        s_uart_inited = false;
+        device_ioctl(s_uart_dev, UART_CMD_DEINIT, NULL);
+        s_uart_dev = nullptr;
     }
     /* 恢复原始输出函数 */
     if (s_orig_vprintf)
@@ -307,34 +282,12 @@ void SerialImpl::stop_serial()
 
 void SerialImpl::on_baud_change(int idx)
 {
-    if (s_uart_inited)
+    if (s_uart_dev)
     {
-        s_uart.deinit(&s_uart);
-        vTaskDelay(pdMS_TO_TICKS(50));
-
-        device_t* dev = device_find("uart_debug");
-        hal_uart_config_t cfg;
-        cfg.tx_pin     = 43;
-        cfg.rx_pin     = 44;
-        cfg.rts_pin    = -1;
-        cfg.cts_pin    = -1;
-        cfg.baud_rate  = BAUD_RATES[idx];
-        cfg.data_bits  = 8;
-        cfg.stop_bits  = 1;
-        cfg.parity     = 0;
-
-        if (dev)
-        {
-            device_get_prop_int(dev, "tx_pin",    &cfg.tx_pin);
-            device_get_prop_int(dev, "rx_pin",    &cfg.rx_pin);
-            device_get_prop_int(dev, "data_bits", &cfg.data_bits);
-            device_get_prop_int(dev, "stop_bits", &cfg.stop_bits);
-            device_get_prop_int(dev, "parity",    &cfg.parity);
-        }
-
-        s_uart.init(&s_uart, &cfg);
+        int baud = BAUD_RATES[idx];
+        device_ioctl(s_uart_dev, UART_CMD_SET_BAUD, &baud);
     }
-    m_connected = s_uart_inited;
+    m_connected = (s_uart_dev != nullptr);
     update_display();
 }
 

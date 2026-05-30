@@ -17,4 +17,5 @@ idf_component_register(
         esp_driver_uart
         esp_driver_i2c
         freertos
+        board
 )

@@ -35,13 +35,15 @@ typedef struct device_instance device_t;
 typedef struct device_node
 {
     const char*         name;
+    const char*         label;          /* DTS label (如 pwm_backlight) */
     const char*         compatible;
-    device_status_t     status;         /* 编译期默认状态 */
-    int                 prop_count;
     const device_prop_t* props;
-    int                 dep_count;
     const device_id_t*  deps;
+    uint8_t             status;         /* 编译期默认状态 */
+    uint8_t             prop_count;
+    uint8_t             dep_count;
 } device_node_t;
+
 
 /* ── VFS 操作表 ── */
 typedef struct file_operation
@@ -64,8 +66,12 @@ typedef struct device_instance
 
 /* ── 查找设备 ── */
 device_t* device_find(const char* name);
+device_t* device_find_by_label(const char* label);
 device_t* device_find_by_compatible(const char* compatible);
 device_t* device_get_parent(const device_t* dev);
+
+/* ── 从属性中解析 phandle 引用并返回目标设备 ── */
+device_t* device_get_phandle_dev(const device_t* dev, const char* key);
 
 /* ── 读取属性（从 dev->node 读取） ── */
 int device_get_prop_int(const device_t* dev, const char* key, int* val);

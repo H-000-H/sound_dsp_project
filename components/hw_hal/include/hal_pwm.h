@@ -7,12 +7,19 @@
 extern "C" {
 #endif
 
+/* ── ioctl 命令 ── */
+#define PWM_CMD_SET_DUTY      0x01  /* arg: uint32_t* — 占空比值 */
+#define PWM_CMD_GET_DUTY      0x02  /* arg: uint32_t* — 获取当前占空比 */
+#define PWM_CMD_SET_FREQ      0x03  /* arg: uint32_t* — 频率 (Hz) */
+#define PWM_CMD_DEINIT        0x04  /* arg: NULL */
+
 typedef struct hal_pwm_channel hal_pwm_channel_t;
 
-struct hal_pwm_channel 
+struct hal_pwm_channel
 {
     int (*init)(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resolution_bits);
     int (*set_duty)(hal_pwm_channel_t* pwm, uint32_t duty);
+    int (*get_duty)(hal_pwm_channel_t* pwm, uint32_t* duty);
     int (*deinit)(hal_pwm_channel_t* pwm);
     void* _impl;
 };

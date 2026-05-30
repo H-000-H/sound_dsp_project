@@ -34,6 +34,8 @@
             miso = <-1>;
             sclk = <4>;
             dma_chan = <-1>;
+            clock_speed_hz = <80000000>;
+            cs_pin = <-1>;
         };
 
         i2s_audio0: i2s@0 {
@@ -57,16 +59,33 @@
             stop_bits = <1>;
             parity = <0>;
         };
+
+        gpio: gpio@0 {
+            compatible = "esp32,gpio";
+        };
+
+        i2c0: i2c@0 {
+            reg = <0>;
+            compatible = "esp32,i2c-bus";
+            sda_pin = <8>;
+            scl_pin = <9>;
+            clock_hz = <400000>;
+        };
+
+        rmt: rmt@0 {
+            reg = <0>;
+            compatible = "esp32,rmt-tx";
+        };
     };
 
     display {
         lcd0: display@0 {
             reg = <0>;
             compatible = "sitronix,st7789";
-            depends_on = <&spi2>;
+            depends_on = <&spi2>, <&pwm_backlight>;
             dc = <6>;
             reset = <7>;
-            backlight = <15>;
+            backlight = <&pwm_backlight>;
             spi_freq_hz = <80000000>;
             width = <240>;
             height = <240>;
@@ -93,6 +112,17 @@
             enter_pin = <3>;
             esc_pin = <46>;
             debounce_ms = <50>;
+        };
+    };
+
+    pwm {
+        pwm_backlight: pwm-backlight@0 {
+            reg = <0>;
+            compatible = "esp32,pwm-backlight";
+            pwm_pin = <15>;
+            freq_hz = <5000>;
+            resolution_bits = <10>;
+            status = "okay";
         };
     };
 

@@ -133,3 +133,82 @@ void hal_spi_bus_init_struct(hal_spi_bus_t* bus)
     bus->deinit = spi_deinit_impl;
     bus->_impl = NULL;
 }
+
+/* ===== SPI 平台驱动层 ===== */
+#include "driver.h"
+
+typedef struct {
+    hal_spi_bus_t bus;
+} spi_priv_t;
+
+static int8_t spi_fops_write(device_t* dev, const void* buffer, size_t len)
+{
+    spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    return priv->bus.write(&priv->bus, (const uint8_t*)buffer, len);
+}
+
+static int8_t spi_fops_ioctl(device_t* dev, int cmd, void* arg)
+{
+    spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    switch (cmd) {
+    case SPI_CMD_READ: {
+        spi_read_arg_t* a = (spi_read_arg_t*)arg;
+        return priv->bus.read(&priv->bus, a->data, a->len);
+    }
+    case SPI_CMD_DEINIT:
+        return priv->bus.deinit(&priv->bus);
+    default:
+        return -1;
+    }
+}
+
+static const file_operation_t spi_fops = {
+    .write = spi_fops_write,
+    .ioctl = spi_fops_ioctl,
+};
+
+static int spi_probe(device_t* dev)
+{
+    int mosi, miso = -1, sclk, dma = -1, clk = 80000000, cs = -1;
+    device_get_prop_int(dev, "mosi", &mosi);
+    device_get_prop_int(dev, "miso", &miso);
+    device_get_prop_int(dev, "sclk", &sclk);
+    device_get_prop_int(dev, "dma_chan", &dma);
+    device_get_prop_int(dev, "clock_speed_hz", &clk);
+    device_get_prop_int(dev, "cs_pin", &cs);
+
+    spi_priv_t* priv = (spi_priv_t*)calloc(1, sizeof(spi_priv_t));
+    if (!priv) return -1;
+
+    hal_spi_bus_config_t bus_cfg = {
+        .mosi = mosi, .miso = miso, .sclk = sclk,
+        .max_transfer_sz = 4096, .dma_chan = dma,
+    };
+    hal_spi_device_config_t dev_cfg = {
+        .mode = 0, .clock_speed_hz = clk, .cs_pin = cs, .queue_size = 7,
+    };
+
+    hal_spi_bus_init_struct(&priv->bus);
+    int ret = priv->bus.init(&priv->bus, &bus_cfg, &dev_cfg);
+    if (ret != 0) { free(priv); return ret; }
+
+    device_set_priv(dev, priv);
+    dev->ops = &spi_fops;
+    ESP_LOGI(kTag, "SPI probed: MOSI=%d, MISO=%d, SCK=%d, clk=%d", mosi, miso, sclk, clk);
+    return 0;
+}
+
+static int spi_remove(device_t* dev)
+{
+    spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
+    if (priv) {
+        priv->bus.deinit(&priv->bus);
+        free(priv);
+        device_set_priv(dev, NULL);
+    }
+    return 0;
+}
+
+DRIVER_REGISTER(spi, "esp32,spi-bus", spi_probe, spi_remove);

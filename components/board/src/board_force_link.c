@@ -8,6 +8,13 @@ extern int board_driver_probe_max98357a(device_t*);
 extern int board_driver_probe_gpio_key(device_t*);
 extern int board_driver_probe_ws2812(device_t*);
 extern int board_driver_probe_light_sensor(device_t*);
+extern int board_driver_probe_pwm_bl(device_t*);
+extern int board_driver_probe_gpio(device_t*);
+extern int board_driver_probe_i2c(device_t*);
+extern int board_driver_probe_spi(device_t*);
+extern int board_driver_probe_i2s(device_t*);
+extern int board_driver_probe_uart(device_t*);
+extern int board_driver_probe_rmt_led(device_t*);
 
 /* volatile 全局变量: 每次写入都是可观察副作用, 编译器无法省略 */
 static volatile void* s_fake_ref;
@@ -19,4 +26,11 @@ static void __attribute__((constructor, used)) _force_probe_link(void)
     s_fake_ref = (void*)board_driver_probe_gpio_key;
     s_fake_ref = (void*)board_driver_probe_ws2812;
     s_fake_ref = (void*)board_driver_probe_light_sensor;
+    s_fake_ref = (void*)board_driver_probe_pwm_bl;
+    s_fake_ref = (void*)board_driver_probe_gpio;
+    s_fake_ref = (void*)board_driver_probe_i2c;
+    s_fake_ref = (void*)board_driver_probe_spi;
+    s_fake_ref = (void*)board_driver_probe_i2s;
+    s_fake_ref = (void*)board_driver_probe_uart;
+    s_fake_ref = (void*)board_driver_probe_rmt_led;
 }

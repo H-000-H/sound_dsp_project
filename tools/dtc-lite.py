@@ -895,8 +895,7 @@ class DTSCompiler:
     def _validate_compatibles(self):
         """验证: 所有设备的 compatible 在 driver_map 中都有对应"""
         PLATFORM = {
-            'esp32,spi-bus', 'esp32,i2s-bus', 'esp32,uart', 'esp32,gpio',
-            'esp32,pwm', 'esp32,rmt',
+            'esp32,cpu',
         }
         errors = []
         for dev in self.device_list:
@@ -1097,6 +1096,7 @@ class CGenerator:
             'int board_dev_count(void);',
             'device_id_t board_dev_find(const char* name);',
             'device_id_t board_dev_find_by_compat(const char* compatible);',
+            'device_id_t board_dev_find_by_label(const char* label);',
             '',
             '/* 运行时设备实例访问 (由 board_device.c 管理) */',
             'device_t* board_dev_get(device_id_t id);',
@@ -1146,7 +1146,7 @@ class CGenerator:
                     elif p.strings:
                         val = p.strings[0]
                     elif p.phandles:
-                        val = f"<phandle {p.phandles[0]}>"
+                        val = p.phandles[0]
                     # 用字符串存所有值
                     prop_arrays.append(f'    {{"{p.name}", "{val}"}},')
                 prop_arrays.append('};')
@@ -1198,10 +1198,12 @@ class CGenerator:
 
             dep_count = sum(1 for dep in self.compiler.get_device_deps(dev)
                           if dep in label_to_idx)
+            label_val = dev.label or ""
 
             node_entries.append(
                 f'    [DEV_ID_{self._snake_name(dev.name)}] = {{\n'
                 f'        .name       = "{dev.name}",\n'
+                f'        .label      = "{label_val}",\n'
                 f'        .compatible = "{compat_str}",\n'
                 f'        .status     = {status_val},\n'
                 f'        .prop_count = {len([p for p in dev.props if p.name not in ("compatible", "depends-on", "depends_on", "status")])},\n'
@@ -1252,6 +1254,16 @@ class CGenerator:
             '    for (int i = 0; i < DEV_ID_COUNT; i++) {',
             '        if (s_nodes[i].compatible[0] &&',
             '            strcmp(s_nodes[i].compatible, compatible) == 0)',
+            '            return (device_id_t)i;',
+            '    }',
+            '    return -1;',
+            '}',
+            '',
+            'device_id_t board_dev_find_by_label(const char* label) {',
+            '    if (!label || !label[0]) return -1;',
+            '    for (int i = 0; i < DEV_ID_COUNT; i++) {',
+            '        if (s_nodes[i].label[0] &&',
+            '            strcmp(s_nodes[i].label, label) == 0)',
             '            return (device_id_t)i;',
             '    }',
             '    return -1;',

@@ -20,6 +20,17 @@ struct hal_rmt_led
 
 void hal_rmt_led_init_struct(hal_rmt_led_t* led);
 
+/* ── ioctl 命令 (平台驱动模式) ── */
+#define RMT_CMD_SET_RGB      0x01  /* arg: rmt_rgb_arg_t* */
+#define RMT_CMD_SET_BRIGHT   0x02  /* arg: uint8_t* */
+#define RMT_CMD_OFF          0x03  /* arg: NULL */
+
+typedef struct {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} rmt_rgb_arg_t;
+
 #ifdef __cplusplus
 }
 #endif

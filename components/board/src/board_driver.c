@@ -15,7 +15,7 @@ void board_register_all_drivers(void)
 int board_driver_probe_all(void)
 {
     ESP_LOGI(kTag, "probing all devices from compile-time DTS table ...");
-    int ok = 0, fail = 0;
+    uint8_t ok = 0, fail = 0;
 
     const device_id_t* order = board_probe_order();
     int count = board_probe_order_count();

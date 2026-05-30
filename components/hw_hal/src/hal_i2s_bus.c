@@ -167,3 +167,80 @@ void hal_i2s_bus_init_struct(hal_i2s_bus_t* bus)
     bus->deinit = i2s_deinit_impl;
     bus->_impl = NULL;
 }
+
+/* ===== I2S 平台驱动层 ===== */
+#include "driver.h"
+
+typedef struct {
+    hal_i2s_bus_t bus;
+} i2s_bus_priv_t;
+
+static int8_t i2s_fops_write(device_t* dev, const void* buffer, size_t len)
+{
+    i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    return priv->bus.write(&priv->bus, (const int16_t*)buffer, len, NULL, pdMS_TO_TICKS(1000));
+}
+
+static int8_t i2s_fops_ioctl(device_t* dev, int cmd, void* arg)
+{
+    i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
+    if (!priv) return -1;
+    switch (cmd) {
+    case I2S_CMD_WRITE: {
+        i2s_write_arg_t* a = (i2s_write_arg_t*)arg;
+        return priv->bus.write(&priv->bus, a->samples, a->bytes, a->written, a->timeout_ms);
+    }
+    case I2S_CMD_DEINIT:
+        return priv->bus.deinit(&priv->bus);
+    default:
+        return -1;
+    }
+}
+
+static const file_operation_t i2s_fops = {
+    .write = i2s_fops_write,
+    .ioctl = i2s_fops_ioctl,
+};
+
+static int i2s_probe(device_t* dev)
+{
+    int ws, bclk, dout, din = -1, sample_rate = 44100, bits = 16;
+    device_get_prop_int(dev, "ws", &ws);
+    device_get_prop_int(dev, "bclk", &bclk);
+    device_get_prop_int(dev, "dout", &dout);
+    device_get_prop_int(dev, "din", &din);
+    device_get_prop_int(dev, "sample_rate", &sample_rate);
+    device_get_prop_int(dev, "bits_per_sample", &bits);
+
+    i2s_bus_priv_t* priv = (i2s_bus_priv_t*)calloc(1, sizeof(i2s_bus_priv_t));
+    if (!priv) return -1;
+
+    hal_i2s_config_t cfg = {
+        .ws_pin = ws, .bclk_pin = bclk, .dout_pin = dout, .din_pin = din,
+        .sample_rate = sample_rate, .bits_per_sample = bits,
+        .channel_format = 1,
+    };
+
+    hal_i2s_bus_init_struct(&priv->bus);
+    int ret = priv->bus.init(&priv->bus, &cfg);
+    if (ret != 0) { free(priv); return ret; }
+
+    device_set_priv(dev, priv);
+    dev->ops = &i2s_fops;
+    ESP_LOGI(kTag, "I2S probed: ws=%d bclk=%d dout=%d rate=%d", ws, bclk, dout, sample_rate);
+    return 0;
+}
+
+static int i2s_remove(device_t* dev)
+{
+    i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
+    if (priv) {
+        priv->bus.deinit(&priv->bus);
+        free(priv);
+        device_set_priv(dev, NULL);
+    }
+    return 0;
+}
+
+DRIVER_REGISTER(i2s, "esp32,i2s-bus", i2s_probe, i2s_remove);

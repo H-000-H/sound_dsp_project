@@ -40,6 +40,15 @@ struct hal_spi_bus
 /* 使用默认函数指针初始化结构体（必须在调用 init 前调用） */
 void hal_spi_bus_init_struct(hal_spi_bus_t* bus);
 
+/* ── ioctl 命令 (平台驱动模式) ── */
+#define SPI_CMD_DEINIT      0x40  /* arg: NULL */
+#define SPI_CMD_READ        0x41  /* arg: spi_read_arg_t* */
+
+typedef struct {
+    uint8_t* data;
+    size_t len;
+} spi_read_arg_t;
+
 #ifdef __cplusplus
 }
 #endif

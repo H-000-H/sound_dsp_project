@@ -1,46 +1,25 @@
 #include "media/mp3.hpp"
 
 #include "device.h"
-#include "hal_i2s_bus.h"
 #include "system_log.hpp"
 
 #include <cstring>
 
 static constexpr const char* kTag = "MP3";
 
-static hal_i2s_bus_t s_i2s = {};
+static device_t* s_i2s_dev = nullptr;
 
 void MP3::init()
 {
-    if (s_i2s._impl) return;
+    if (s_i2s_dev) return;
 
-    device_t* i2s_dev = device_find("i2s_audio0");
-    if (!i2s_dev)
+    s_i2s_dev = device_find("i2s_audio0");
+    if (!s_i2s_dev)
     {
         SYS_LOGE(kTag, "i2s_audio0 not found in device tree");
         return;
     }
-
-    int ws_pin = 4, bclk_pin = 5, dout_pin = 6;
-    device_get_prop_int(i2s_dev, "ws", &ws_pin);
-    device_get_prop_int(i2s_dev, "bclk", &bclk_pin);
-    device_get_prop_int(i2s_dev, "dout", &dout_pin);
-
-    hal_i2s_config_t cfg = {};
-    cfg.ws_pin = ws_pin;
-    cfg.bclk_pin = bclk_pin;
-    cfg.dout_pin = dout_pin;
-    cfg.sample_rate = 44100;
-    cfg.din_pin = -1;
-    cfg.bits_per_sample = 16;
-
-    hal_i2s_bus_init_struct(&s_i2s);
-    if (s_i2s.init(&s_i2s, &cfg) != 0)
-    {
-        SYS_LOGE(kTag, "I2S init failed");
-        return;
-    }
-    SYS_LOGI(kTag, "I2S init OK (ws=%d bclk=%d dout=%d)", ws_pin, bclk_pin, dout_pin);
+    SYS_LOGI(kTag, "I2S device found");
 }
 
 void MP3::play(uint8_t* src_data, uint32_t len)
@@ -75,9 +54,9 @@ void MP3::play(uint8_t* src_data, uint32_t len)
         }
         if (volume->flag_change == true) volume->process_audio_volume(m_buffer, samples);
 
-        if (s_i2s._impl)
+        if (s_i2s_dev)
         {
-            s_i2s.write(&s_i2s, m_buffer, size, &written, 1000);
+            device_write(s_i2s_dev, m_buffer, size);
         }
     }
     MP3FreeDecoder(dec);

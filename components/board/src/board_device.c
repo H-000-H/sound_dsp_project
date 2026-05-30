@@ -34,6 +34,21 @@ device_t* device_find(const char* name)
     return board_dev_get(id);
 }
 
+device_t* device_find_by_label(const char* label)
+{
+    device_id_t id = board_dev_find_by_label(label);
+    if ((int)id < 0) return NULL;
+    return board_dev_get(id);
+}
+
+device_t* device_get_phandle_dev(const device_t* dev, const char* key)
+{
+    const char* val;
+    if (device_get_prop_str(dev, key, &val) != 0) return NULL;
+    /* dtc-lite 将 phandle 引用存为 label 名字符串 */
+    return device_find_by_label(val);
+}
+
 device_t* device_find_by_compatible(const char* compatible)
 {
     device_id_t id = board_dev_find_by_compat(compatible);

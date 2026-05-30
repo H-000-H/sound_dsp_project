@@ -47,6 +47,19 @@ int hal_gpio_install_isr(int isr_flags);
 int hal_gpio_add_isr(int pin, hal_gpio_isr_t handler, void* arg);
 int hal_gpio_remove_isr(int pin);
 
+/* ── GPIO controller ioctl 命令 (平台驱动模式) ── */
+#define GPIO_CMD_CONFIG       0x10  /* arg: hal_gpio_config_t* */
+#define GPIO_CMD_TOGGLE       0x11  /* arg: int* (pin) */
+#define GPIO_CMD_INSTALL_ISR  0x12  /* arg: int* (isr_flags) */
+#define GPIO_CMD_ADD_ISR      0x13  /* arg: gpio_isr_arg_t* */
+#define GPIO_CMD_REMOVE_ISR   0x14  /* arg: int* (pin) */
+
+typedef struct {
+    int pin;
+    hal_gpio_isr_t handler;
+    void* arg;
+} gpio_isr_arg_t;
+
 #ifdef __cplusplus
 }
 #endif
