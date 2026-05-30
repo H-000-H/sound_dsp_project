@@ -199,3 +199,46 @@
 ### 29.7 ADC 安全关闭命令
 - **[新增]** `vfs_adc.h`/`hal_adc.h` 增加 `ADC_CMD_STOP 0x71`。`adc.c` ioctl 处理（oneshot 模式为安全 no-op）。
 - `light_sensor_remove` 调用 `ADC_CMD_STOP` 告知硬件层释放通道引用。
+
+---
+
+## 30. IEC 61508 最终重构：设备关键性 + I/O 超时强制
+> **审查来源：** Auditor 级「最终重构指令」Mandate 4 & 5
+> **核心目标：** 用 FSM 确保关键设备死亡触发系统复位 + 所有 I/O 通路携带超时参数
+
+### 30.1 设备关键性等级 (Device Criticality)
+- **[IEC 61508 §7.6.2.3]** 新增 `device_criticality_t` 枚举 (`DEVICE_CRIT_IGNORE` / `DEVICE_CRIT_WARNING` / `DEVICE_CRIT_FATAL`)。
+- `device_node_t` 增加 `uint8_t criticality` 字段，由 dtc-lite.py 从 DTS `criticality = "fatal"|"warning"|"ignore"` 编译期生成。
+- **FATAL 级设备**（SPI 总线、GPIO 控制器）probe 失败时触发 `OSAL_PANIC` → 系统复位。
+- **WARNING 级**（显示、UART、I2C、按键）失败时记录告警，系统继续运行。
+- **IGNORE 级**（LED、音频功放、光敏传感器）失败无声忽略。
+- **[影响]** `board.dts` 中 14 个设备节点全部标注 criticality 属性。`board_driver.c` 新增 `handle_probe_failure()` 按等级分发。
+
+### 30.2 I/O 超时强制 (Timeout Enforcement)
+- **[IEC 61508 §3.2.2]** `file_operation_t.write/read` 签名增加 `uint32_t timeout_ms` 参数。
+- `device_write()`/`device_read()` VFS 包装同步更新，透传 timeout_ms。
+- 4 个 SoC 层驱动（uart/spi/rmt_led/i2s_bus）的 `fops_write` 函数适配新签名。
+- 3 个调用方（st7789、ws2812、mp3）传入具体超时值（100~1000ms）。
+- **[影响]**
+  - `device.h` — file_operation_t 及 VFS API 声明更新
+  - `board_device.c` — device_write/device_read 实现透传
+  - `uart.c` / `spi.c` / `rmt_led.c` / `i2s_bus.c` — fops_write 签名适配
+  - `st7789_driver.c` / `ws2812_driver.c` / `mp3.cpp` — 调用方传入 timeout_ms
+  - `i2s_bus.c` 最大收益：硬编码 `1000` 替换为调用方传入的 timeout_ms
+
+### 30.3 DTS Criticality 属性对照表
+| 路径 | Label | Criticality | 说明 |
+|------|-------|-------------|------|
+| `/soc/spi@2` | spi2 | `fatal` | 显示总线，系统关键 |
+| `/soc/gpio@0` | gpio | `fatal` | 几乎所有设备依赖 |
+| `/soc/i2s@0` | i2s_audio0 | `warning` | 音频子系统 |
+| `/soc/uart@0` | uart_debug | `warning` | 控制台输出 |
+| `/soc/i2c@0` | i2c0 | `warning` | 仅光敏传感器 |
+| `/soc/rmt@0` | rmt | `warning` | 仅 LED |
+| `/soc/adc@1` | adc0 | `warning` | 仅光敏传感器 |
+| `/display/display@0` | lcd0 | `warning` | 可无显示运行 |
+| `/audio/amplifier@0` | speaker_amp0 | `ignore` | 音频放大，非必要 |
+| `/input/gpio-keys@0` | buttons0 | `warning` | 人机交互 |
+| `/pwm/pwm-backlight@0` | pwm_backlight | `ignore` | 背光，非必要 |
+| `/leds/led@0` | rgb_led0 | `ignore` | 状态灯，装饰性 |
+| `/sensors/light@0` | lights_sensor0 | `ignore` | 环境光，非必要 |

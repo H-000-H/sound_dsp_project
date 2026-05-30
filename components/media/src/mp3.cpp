@@ -56,7 +56,7 @@ void MP3::play(uint8_t* src_data, uint32_t len)
 
         if (s_i2s_dev)
         {
-            device_write(s_i2s_dev, m_buffer, size);
+            device_write(s_i2s_dev, m_buffer, size, 100);
         }
     }
     MP3FreeDecoder(dec);

@@ -192,11 +192,11 @@ typedef struct {
 static i2s_bus_priv_t s_i2s_bus_priv_pool[I2S_BUS_PRIV_POOL_SIZE];
 static uint8_t s_i2s_bus_priv_used[I2S_BUS_PRIV_POOL_SIZE];
 
-static int i2s_fops_write(device_t* dev, const void* buffer, size_t len)
+static int i2s_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
     i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
-    return priv->bus.write(&priv->bus, (const int16_t*)buffer, len, NULL, 1000);
+    return priv->bus.write(&priv->bus, (const int16_t*)buffer, len, NULL, timeout_ms);
 }
 
 static int i2s_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)

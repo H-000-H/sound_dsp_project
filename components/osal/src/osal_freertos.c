@@ -19,6 +19,29 @@ struct osal_mutex {
 _Static_assert(sizeof(struct osal_mutex) <= OSAL_MUTEX_STORAGE_SIZE,
                "OSAL_MUTEX_STORAGE_SIZE too small");
 
+/* ── Spinlock: 关中断临界区, 适配 FreeRTOS portMUX_TYPE ── */
+struct osal_spinlock {
+    portMUX_TYPE lock;
+};
+
+void osal_spinlock_init(osal_spinlock_t* lock)
+{
+    if (!lock) return;
+    lock->lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+}
+
+void osal_spinlock_lock(osal_spinlock_t* lock)
+{
+    if (!lock) return;
+    taskENTER_CRITICAL(&lock->lock);
+}
+
+void osal_spinlock_unlock(osal_spinlock_t* lock)
+{
+    if (!lock) return;
+    taskEXIT_CRITICAL(&lock->lock);
+}
+
 /* ── 静态互斥锁池（禁止运行时动态分配） ── */
 #define OSAL_MUTEX_POOL_SIZE 24
 

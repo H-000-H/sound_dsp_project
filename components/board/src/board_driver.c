@@ -25,19 +25,50 @@ static int device_has_failed_dependency(const device_t* dev)
     return 0;
 }
 
+static void handle_probe_failure(device_t* dev, device_id_t id)
+{
+    device_criticality_t crit = device_get_criticality(dev);
+    switch (crit) {
+    case DEVICE_CRIT_FATAL:
+        DRV_LOGE(kTag, "FATAL: '%s' probe failed — initiating safe shutdown",
+                 device_get_name(dev));
+        OSAL_PANIC("FATAL device '%s' probe failed", device_get_name(dev));
+        break;
+    case DEVICE_CRIT_IGNORE:
+        /* 无声忽略: 非关键设备, 不浪费 log 带宽 */
+        break;
+    case DEVICE_CRIT_WARNING:
+    default:
+        DRV_LOGW(kTag, "non-fatal probe failure for '%s'", device_get_name(dev));
+        break;
+    }
+}
+
 static void disable_dependents(device_id_t failed_id)
 {
-    for (int i = 0; i < board_dev_count(); i++) {
-        device_t* child = board_dev_get((device_id_t)i);
-        if (!child || !child->node || !child->node->deps) continue;
+    /* 多层级联失效阻断: 反复遍历直到无新设备被禁用 (BFS 收敛) */
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < board_dev_count(); i++) {
+            device_t* child = board_dev_get((device_id_t)i);
+            if (!child || !child->node || !child->node->deps) continue;
+            if (device_get_status(child) == DEVICE_STATUS_DISABLED) continue;
 
-        for (int j = 0; j < child->node->dep_count; j++) {
-            if (child->node->deps[j] == failed_id) {
-                if (device_get_status(child) != DEVICE_STATUS_DISABLED) {
+            for (int j = 0; j < child->node->dep_count; j++) {
+                device_id_t dep_id = child->node->deps[j];
+                device_t* dep = board_dev_get(dep_id);
+                if (!dep) continue;
+                device_status_t dep_status = device_get_status(dep);
+                if (dep_status == DEVICE_STATUS_DISABLED ||
+                    dep_status == DEVICE_STATUS_ERROR ||
+                    dep_status == DEVICE_STATUS_REMOVED) {
                     (void)device_set_status(child, DEVICE_STATUS_DISABLED);
-                    DRV_LOGW(kTag, "disable dependent '%s' due to failed dependency", device_get_name(child));
+                    DRV_LOGW(kTag, "cascade disable '%s': dependency '%s' (%d) unavailable",
+                             device_get_name(child), device_get_name(dep), dep_id);
+                    changed = 1;
+                    break;
                 }
-                break;
             }
         }
     }
@@ -72,11 +103,12 @@ int board_driver_probe_all(void)
             continue;
         }
          // 容错处理：设备存在，但没有找到匹配的驱动程序
-        if (!probe) 
+        if (!probe)
         {
             DRV_LOGW(kTag, "no generated probe for '%s' (compat=%s)",
                      device_get_name(dev), device_get_compatible(dev));
             (void)device_set_status(dev, DEVICE_STATUS_DISABLED);// 标记为残废
+            handle_probe_failure(dev, id);
             disable_dependents(id);
             fail++;
             continue;
@@ -90,9 +122,10 @@ int board_driver_probe_all(void)
             (void)device_set_status(dev, DEVICE_STATUS_PROBED);
             ok++;
         } 
-        else 
+        else
         {
             (void)device_set_status(dev, DEVICE_STATUS_ERROR);
+            handle_probe_failure(dev, id);
             disable_dependents(id);
             fail++;
             DRV_LOGE(kTag, "probe FAILED: %s (ret=%d)", device_get_name(dev), ret);

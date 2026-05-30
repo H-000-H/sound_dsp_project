@@ -213,15 +213,16 @@ static int rmt_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
     }
 }
 
-static int rmt_fops_write(device_t* dev, const void* buf, size_t len);
+static int rmt_fops_write(device_t* dev, const void* buf, size_t len, uint32_t timeout_ms);
 
 static const file_operation_t rmt_fops = {
     .write = rmt_fops_write,
     .ioctl = rmt_fops_ioctl,
 };
 
-static int rmt_fops_write(device_t* dev, const void* buf, size_t len)
+static int rmt_fops_write(device_t* dev, const void* buf, size_t len, uint32_t timeout_ms)
 {
+    (void)timeout_ms;
     rmt_led_priv_t* priv = (rmt_led_priv_t*)device_get_priv(dev);
     if (!priv || !buf || len < 3) return VFS_ERR_INVAL;
 

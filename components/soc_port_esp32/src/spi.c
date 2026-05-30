@@ -177,8 +177,9 @@ typedef struct {
 static spi_priv_t s_spi_priv_pool[SPI_PRIV_POOL_SIZE];
 static uint8_t s_spi_priv_used[SPI_PRIV_POOL_SIZE];
 
-static int spi_fops_write(device_t* dev, const void* buffer, size_t len)
+static int spi_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
+    (void)timeout_ms;
     spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     return priv->bus.write(&priv->bus, (const uint8_t*)buffer, len);

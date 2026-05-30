@@ -20,6 +20,13 @@ typedef struct
     const char* value;
 } device_prop_t;
 
+/* ── 设备关键性等级 ── */
+typedef enum {
+    DEVICE_CRIT_IGNORE = 0,   /* 可无声忽略 */
+    DEVICE_CRIT_WARNING,      /* 失败时记录告警 (默认) */
+    DEVICE_CRIT_FATAL,        /* 失败时触发 OSAL_PANIC 安全停机 */
+} device_criticality_t;
+
 /* ── 设备状态 ── */
 typedef enum {
     DEVICE_STATUS_DISABLED = 0,
@@ -45,6 +52,7 @@ typedef struct device_node
     const device_prop_t* props;
     const device_id_t*  deps;
     uint8_t             status;         /* 编译期默认状态 */
+    uint8_t             criticality;    /* DEVICE_CRIT_xxx: probe 失败时的系统行为 */
     uint8_t             prop_count;
     uint8_t             dep_count;
 } device_node_t;
@@ -56,8 +64,8 @@ typedef struct file_operation
     int (*init) (device_t* dev);
     int (*open) (device_t* dev, void* arg);
     int (*close)(device_t* dev);
-    int (*write)(device_t* dev, const void* buffer, size_t len);
-    int (*read) (device_t* dev, void* buffer, size_t len);
+    int (*write)(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms);
+    int (*read) (device_t* dev, void* buffer, size_t len, uint32_t timeout_ms);
     int (*ioctl)(device_t* dev, int cmd, void* arg, size_t arg_len);
     int (*suspend)(device_t* dev);
     int (*resume)(device_t* dev);
@@ -92,6 +100,7 @@ int device_get_prop_bool(const device_t* dev, const char* key, int* val);
 const char* device_get_name(const device_t* dev);
 const char* device_get_compatible(const device_t* dev);
 device_status_t device_get_status(const device_t* dev);
+device_criticality_t device_get_criticality(const device_t* dev);
 
 /* ── 运行时状态管理 ── */
 int device_set_status(device_t* dev, device_status_t status);
@@ -113,8 +122,8 @@ int device_unlock(device_t* dev);
 /* ── VFS 便捷包装（内部自动抓锁, 空指针安全, 调用 dev->ops） ── */
 int device_open(device_t* dev, void* arg);
 int device_close(device_t* dev);
-int device_write(device_t* dev, const void* buf, size_t len);
-int device_read(device_t* dev, void* buf, size_t len);
+int device_write(device_t* dev, const void* buf, size_t len, uint32_t timeout_ms);
+int device_read(device_t* dev, void* buf, size_t len, uint32_t timeout_ms);
 int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
 int device_suspend(device_t* dev);
 int device_resume(device_t* dev);

@@ -84,7 +84,7 @@ static int spi_write_chunked(st7789_priv_t* priv, const uint8_t* data, size_t le
     while (offset < len) {
         size_t chunk = len - offset;
         if (chunk > priv->spi_chunk) chunk = priv->spi_chunk;
-        int ret = device_write(priv->spi_dev, data + offset, chunk);
+        int ret = device_write(priv->spi_dev, data + offset, chunk, 1000);
         if (ret != 0) return ret;
         offset += chunk;
     }

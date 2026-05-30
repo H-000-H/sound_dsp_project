@@ -31,6 +31,13 @@ uint32_t osal_ticks_from_ms(uint32_t ms);
 void* osal_calloc(size_t count, size_t size);
 void osal_free(void* ptr);
 
+/* ── Spinlock (临界区, 关中断保护) ── */
+typedef struct osal_spinlock osal_spinlock_t;
+
+void osal_spinlock_init(osal_spinlock_t* lock);
+void osal_spinlock_lock(osal_spinlock_t* lock);
+void osal_spinlock_unlock(osal_spinlock_t* lock);
+
 /* ── Mutex ── */
 #define OSAL_MUTEX_STORAGE_SIZE 96   /* 足够容纳 struct osal_mutex + 静态信号量缓存 */
 

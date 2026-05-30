@@ -39,23 +39,7 @@ typedef struct
 
 typedef void (*hal_gpio_isr_t)(void* arg);
 
-/* ── 快路径 API（直接函数调用，绕过 device_ioctl） ──
- *   默认启用。定义 HAL_GPIO_FAST_PATH=0 禁止外部直接调 GPIO 函数，
- *   强制走 device_ioctl() 通用路径。
- */
-#ifndef HAL_GPIO_FAST_PATH
-#define HAL_GPIO_FAST_PATH 0
-#endif
-
-#if HAL_GPIO_FAST_PATH
-int hal_gpio_init(const hal_gpio_config_t* cfg);
-int hal_gpio_set_level(int pin, int level);
-int hal_gpio_get_level(int pin);
-int hal_gpio_toggle(int pin);
-int hal_gpio_install_isr(int isr_flags);
-int hal_gpio_add_isr(int pin, hal_gpio_isr_t handler, void* arg);
-int hal_gpio_remove_isr(int pin);
-#endif
+/* VFS 唯一路径: GPIO 操作强制走 device_ioctl(), 遵守设备状态机 */
 
 #define GPIO_CMD_CONFIG       0x10
 #define GPIO_CMD_TOGGLE       0x11

@@ -1167,7 +1167,7 @@ class CGenerator:
             safe = self._c_safe_name(dev.name)
             # 属性
             prop_list = [p for p in dev.props if p.name not in
-                         ('compatible', 'depends-on', 'depends_on', 'status')]
+                         ('compatible', 'depends-on', 'depends_on', 'status', 'criticality')]
             if prop_list:
                 prop_arrays.append(f'/* {dev.path} */')
                 prop_arrays.append(f'static const device_prop_t DEV_{safe}_props[] = {{')
@@ -1219,8 +1219,18 @@ class CGenerator:
             else:
                 status_val = 'DEVICE_STATUS_READY'
 
+            # criticality
+            crit_prop = dev.get_prop('criticality')
+            if crit_prop and crit_prop.strings:
+                crit_map = {'fatal': 'DEVICE_CRIT_FATAL', 'warning': 'DEVICE_CRIT_WARNING', 'ignore': 'DEVICE_CRIT_IGNORE'}
+                crit_val = crit_map.get(crit_prop.strings[0].lower(), 'DEVICE_CRIT_WARNING')
+            else:
+                crit_val = 'DEVICE_CRIT_WARNING'
+
+            EXCLUDED_PROPS = ('compatible', 'depends-on', 'depends_on', 'status', 'criticality')
+
             prop_ref = f'DEV_{safe}_props' if any(
-                p.name not in ('compatible', 'depends-on', 'depends_on', 'status')
+                p.name not in EXCLUDED_PROPS
                 for p in dev.props
             ) else 'NULL'
 
@@ -1232,6 +1242,8 @@ class CGenerator:
                           if dep in label_to_idx)
             label_val = dev.label or ""
 
+            EXCLUDED_PROPS = ('compatible', 'depends-on', 'depends_on', 'status', 'criticality')
+
             node_entries.append(
                 f'    [DEV_ID_{self._snake_name(dev.name)}] = {{\n'
                 f'        .name       = "{dev.name}",\n'
@@ -1239,7 +1251,8 @@ class CGenerator:
                 f'        .compatible = "{compat_str}",\n'
                 f'        .path       = "{dev.path}",\n'
                 f'        .status     = {status_val},\n'
-                f'        .prop_count = {len([p for p in dev.props if p.name not in ("compatible", "depends-on", "depends_on", "status")])},\n'
+                f'        .criticality = {crit_val},\n'
+                f'        .prop_count = {len([p for p in dev.props if p.name not in EXCLUDED_PROPS])},\n'
                 f'        .props      = {prop_ref},\n'
                 f'        .dep_count  = {dep_count},\n'
                 f'        .deps       = (const device_id_t*){dep_ref},\n'

@@ -18,7 +18,12 @@
       "Bash(python -c ' *)",
       "Read(//c/Espressif/dist/**)",
       "Read(//c/Espressif/**)",
-      "Bash(D:/Espressif_vscode/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32s3-elf-readelf -s -W build/esp-idf/board/CMakeFiles/__idf_board.dir/generated/board_probe.c.obj)"
+      "Bash(D:/Espressif_vscode/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32s3-elf-readelf -s -W build/esp-idf/board/CMakeFiles/__idf_board.dir/generated/board_probe.c.obj)",
+      "Bash(curl *)",
+      "Bash(powershell.exe -Command \"Resolve-DnsName api.deepseek.com -ErrorAction SilentlyContinue | Select-Object Name, IPAddress\")",
+      "Read(//d/ESP32_PROJECT/**)",
+      "Read(//opt/**)",
+      "Bash(git add *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\18514\\.codex"

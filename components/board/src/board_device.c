@@ -6,7 +6,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include "freertos/portmacro.h"
 
 /* ── 运行时设备实例表 ── */
 static device_t s_devices[DEV_ID_COUNT];
@@ -16,7 +15,7 @@ static uint8_t s_device_lock_storage[DEV_ID_COUNT][OSAL_MUTEX_STORAGE_SIZE];
 static uint8_t s_ws2812_rgb_buf[3];
 
 /* ── device_set_status FSM 原子锁 (IEC 61508 2.7.1) ── */
-static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
+static osal_spinlock_t s_status_lock;
 
 static void board_inject_platform_data(void)
 {
@@ -77,6 +76,7 @@ int device_tree_init(void)
             }
         }
     }
+    osal_spinlock_init(&s_status_lock);
     board_inject_platform_data();
     return board_dev_count() > 0 ? 0 : -1;
 }
@@ -196,16 +196,22 @@ device_status_t device_get_status(const device_t* dev)
     return dev ? dev->status : DEVICE_STATUS_DISABLED;
 }
 
+device_criticality_t device_get_criticality(const device_t* dev)
+{
+    if (!dev || !dev->node) return DEVICE_CRIT_WARNING;
+    return (device_criticality_t)dev->node->criticality;
+}
+
 int device_set_status(device_t* dev, device_status_t status)
 {
     if (!dev) return -1;
-    taskENTER_CRITICAL(&s_status_lock);
+    osal_spinlock_lock(&s_status_lock);
     if (!device_status_can_transit(dev->status, status)) {
-        taskEXIT_CRITICAL(&s_status_lock);
+        osal_spinlock_unlock(&s_status_lock);
         return -1;
     }
     dev->status = status;
-    taskEXIT_CRITICAL(&s_status_lock);
+    osal_spinlock_unlock(&s_status_lock);
     return 0;
 }
 
@@ -314,7 +320,7 @@ int device_close(device_t* dev)
     return 0;
 }
 
-int device_write(device_t* dev, const void* buf, size_t len)
+int device_write(device_t* dev, const void* buf, size_t len, uint32_t timeout_ms)
 {
     if (!dev) return -1;
     int ret = device_lock(dev);
@@ -323,12 +329,12 @@ int device_write(device_t* dev, const void* buf, size_t len)
         device_unlock(dev);
         return -1;
     }
-    ret = dev->ops->write(dev, buf, len);
+    ret = dev->ops->write(dev, buf, len, timeout_ms);
     device_unlock(dev);
     return ret;
 }
 
-int device_read(device_t* dev, void* buf, size_t len)
+int device_read(device_t* dev, void* buf, size_t len, uint32_t timeout_ms)
 {
     if (!dev) return -1;
     int ret = device_lock(dev);
@@ -337,7 +343,7 @@ int device_read(device_t* dev, void* buf, size_t len)
         device_unlock(dev);
         return -1;
     }
-    ret = dev->ops->read(dev, buf, len);
+    ret = dev->ops->read(dev, buf, len, timeout_ms);
     device_unlock(dev);
     return ret;
 }

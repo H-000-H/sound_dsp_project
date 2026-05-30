@@ -60,7 +60,7 @@ static int ws2812_probe(device_t* dev)
 
     /* 初始关闭: 发送全零 */
     uint8_t grb[3] = {0, 0, 0};
-    ret = device_write(priv->parent, grb, 3);
+    ret = device_write(priv->parent, grb, 3, 100);
     if (ret != 0) {
         DRV_LOGW(kTag, "initial off failed: %d", ret);
     }
@@ -86,7 +86,7 @@ static int ws2812_remove(device_t* dev)
         /* 关闭 LED */
         if (priv->parent) {
             uint8_t grb[3] = {0, 0, 0};
-            device_write(priv->parent, grb, 3);
+            device_write(priv->parent, grb, 3, 100);
         }
         for (int i = 0; i < WS2812_PRIV_POOL_SIZE; i++) {
             if (&s_ws2812_pool[i] == priv) { osal_pool_release(s_ws2812_used, WS2812_PRIV_POOL_SIZE, i); break; }
@@ -123,7 +123,7 @@ static int ws2812_set_color(device_t* dev, uint8_t r, uint8_t g, uint8_t b)
 
     /* GRB order = WS2812 物理协议原生格式 */
     uint8_t grb[3] = {wg, wr, wb};
-    return device_write(priv->parent, grb, 3);
+    return device_write(priv->parent, grb, 3, 100);
 }
 
 static int ws2812_set_brightness(device_t* dev, uint8_t brightness)

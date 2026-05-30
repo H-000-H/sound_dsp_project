@@ -30,6 +30,7 @@
         spi2: spi@2 {
             reg = <2>;
             compatible = "esp32,spi-bus";
+            criticality = "fatal";
             host = <2>;
             mosi = <5>;
             miso = <-1>;
@@ -43,6 +44,7 @@
         i2s_audio0: i2s@0 {
             reg = <0>;
             compatible = "esp32,i2s-bus";
+            criticality = "warning";
             ws = <13>;
             bclk = <12>;
             dout = <11>;
@@ -54,6 +56,7 @@
         uart_debug: uart@0 {
             reg = <0>;
             compatible = "esp32,uart";
+            criticality = "warning";
             tx_pin = <43>;
             rx_pin = <44>;
             baud_rate = <115200>;
@@ -64,11 +67,13 @@
 
         gpio: gpio@0 {
             compatible = "esp32,gpio";
+            criticality = "fatal";
         };
 
         i2c0: i2c@0 {
             reg = <0>;
             compatible = "esp32,i2c-bus";
+            criticality = "warning";
             sda_pin = <8>;
             scl_pin = <9>;
             clock_hz = <400000>;
@@ -77,6 +82,7 @@
         rmt: rmt@0 {
             reg = <0>;
             compatible = "esp32,rmt-tx";
+            criticality = "warning";
             gpio = <48>;
             rmt_resolution_hz = <10000000>;
         };
@@ -84,6 +90,7 @@
         adc0: adc@1 {
             reg = <1>;
             compatible = "esp32,adc";
+            criticality = "warning";
             unit = <1>;
         };
     };
@@ -92,6 +99,7 @@
         lcd0: display@0 {
             reg = <0>;
             compatible = "sitronix,st7789";
+            criticality = "warning";
             depends_on = <&spi2>, <&pwm_backlight>;
             gpio = <&gpio>;
             dc = <6>;
@@ -108,6 +116,7 @@
         speaker_amp0: amplifier@0 {
             reg = <0>;
             compatible = "maxim,max98357a";
+            criticality = "ignore";
             depends_on = <&i2s_audio0>;
             gpio = <&gpio>;
             sdn_pin = <10>;
@@ -119,6 +128,7 @@
         buttons0: gpio-keys@0 {
             reg = <0>;
             compatible = "gpio-keys";
+            criticality = "warning";
             gpio = <&gpio>;
             next_pin = <16>;
             prev_pin = <17>;
@@ -132,6 +142,7 @@
         pwm_backlight: pwm-backlight@0 {
             reg = <0>;
             compatible = "generic,pwm-backlight";
+            criticality = "ignore";
             pwm_pin = <15>;
             freq_hz = <5000>;
             resolution_bits = <10>;
@@ -143,6 +154,7 @@
         rgb_led0: led@0 {
             reg = <0>;
             compatible = "worldsemi,ws2812";
+            criticality = "ignore";
             depends_on = <&rmt>;
             led_count = <1>;
             brightness = <28>;
@@ -153,6 +165,7 @@
         lights_sensor0: light@0 {
             reg = <0>;
             compatible = "gl5528,photoresistor";
+            criticality = "ignore";
             depends_on = <&adc0>;
             adc_pin = <1>;
             adc_channel = <0>;

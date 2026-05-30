@@ -137,8 +137,9 @@ typedef struct {
 static uart_priv_t s_uart_priv_pool[UART_PRIV_POOL_SIZE];
 static uint8_t s_uart_priv_used[UART_PRIV_POOL_SIZE];
 
-static int uart_fops_write(device_t* dev, const void* buffer, size_t len)
+static int uart_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
+    (void)timeout_ms;
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     return priv->uart.write(&priv->uart, (const uint8_t*)buffer, len);
