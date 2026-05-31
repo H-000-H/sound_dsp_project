@@ -92,9 +92,9 @@ static const file_operation_t st7789_fops = {
 };
 
 
-static st7789_priv_t __attribute__((aligned(32))) s_st7789_pool[ST7789_COUNT];
+static st7789_priv_t __attribute__((aligned(64))) s_st7789_pool[ST7789_COUNT];
 static uint8_t s_st7789_used[ST7789_COUNT];
-static uint8_t __attribute__((aligned(32))) s_st7789_line_buf[ST7789_COUNT][ST7789_LINE_BUF_SIZE];
+static uint8_t      __attribute__((aligned(64))) s_st7789_line_buf[ST7789_COUNT][ST7789_LINE_BUF_SIZE];
 
 static int spi_write_chunked(st7789_priv_t* priv, const uint8_t* data, size_t len, uint32_t timeout_ms)
 {

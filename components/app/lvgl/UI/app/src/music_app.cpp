@@ -716,6 +716,22 @@ void MusicApp::hide()
     }
 }
 
+void MusicApp::on_destroy()
+{
+    hide();
+    if (m_screen)
+    {
+        lv_obj_del(m_screen);
+        m_screen = nullptr;
+    }
+    m_record = m_title = m_artist = nullptr;
+    m_prog_bar = m_prog_knob = nullptr;
+    m_time_l = m_time_r = nullptr;
+    m_vol_bar = nullptr;
+    m_mode_dd = m_mode_val = nullptr;
+    m_play_btn = m_play_mode_lbl = nullptr;
+}
+
 const lv_image_dsc_t* MusicApp::app_icon() const
 {
     extern const lv_image_dsc_t icon_music;

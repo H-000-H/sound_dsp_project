@@ -44,6 +44,14 @@
 #define BOARD_MAX_SAFETY_PINS     8
 #define BOARD_SAFETY_MAX_CALLBACKS 4
 
+/* ── 栈水位监控 (Stack High Water Mark) ── */
+#define BOARD_STACK_MONITOR_MAX_TASKS 8
+#define BOARD_STACK_ALARM_RATIO_DEFAULT 15  /* percent: alarm when remaining < 15% of total stack */
+
+/* ── 安全状态 (Safe State) 硬件引脚 ── */
+#define BOARD_SAFE_STATE_BUZZER_PIN   GPIO_NUM_25
+#define BOARD_SAFE_STATE_FAULT_LED_PIN GPIO_NUM_26
+
 /* ── OSAL 互斥锁池 (device_t per-device lock + 驱动内部锁) ── */
 #define OSAL_MUTEX_POOL_SIZE      24
 
@@ -55,5 +63,16 @@
 
 /* ── PWM 硬件通道 ── */
 #define PWM_MAX_CHANNELS          8
+
+/* ── Flash 位腐烂巡检 (Bit-Rot Scrubber) ──
+ *
+ * 块大小与间隔经过 Cache 污染分析:
+ *   32 字节/次 × 200ms 间隔 = 160 字节/秒
+ *   对于 4MB app 分区 ≈ 7.2 小时完成一次全巡检
+ *   每次读取仅 32 字节, 不挤占 I-Cache/D-Cache 热点代码
+ */
+#define SYSTEM_SCRUBBER_CHUNK_BYTES    32
+#define SYSTEM_SCRUBBER_INTERVAL_MS    200
+#define SYSTEM_SCRUBBER_CRC_BASELINE   0x00000000  /* 由 post_build_crc.py 自动填充 */
 
 #endif /* BOARD_CONFIG_H */

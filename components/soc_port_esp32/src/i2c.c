@@ -4,10 +4,14 @@
 #include "driver.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
+#include "esp_private/periph_ctrl.h"
 #include "osal.h"
+#include "soc/periph_defs.h"
 #include "VFS.h"
 #include "board_config.h"
 #include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -102,6 +106,9 @@ static int i2c_init_impl(hal_i2c_bus_t* bus, const hal_i2c_config_t* cfg)
         goto err_pool;
     }
 
+    /* 软复位后外设寄存器可能残留半传输状态, 强制硬件复位 */
+    periph_module_reset(cfg->port == 0 ? PERIPH_I2C0_MODULE : PERIPH_I2C1_MODULE);
+
     i2c_master_bus_config_t esp_cfg = {
         .i2c_port = cfg->port,
         .sda_io_num = (gpio_num_t)cfg->sda_pin,
@@ -136,6 +143,12 @@ static int i2c_write_impl(hal_i2c_bus_t* bus, uint8_t addr,
                           const uint8_t* data, size_t len, uint32_t timeout_ms)
 {
     if (!bus || !bus->_impl || !data || len == 0) return VFS_ERR_INVAL;
+
+    if (xPortInIsrContext()) {
+        DRV_LOGE(TAG, "I2C write from ISR forbidden");
+        return VFS_ERR_INVAL;
+    }
+
     hal_i2c_impl_t* impl = (hal_i2c_impl_t*)bus->_impl;
 
     if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return VFS_ERR_BUSY;
@@ -163,6 +176,12 @@ static int i2c_read_impl(hal_i2c_bus_t* bus, uint8_t addr,
                          uint8_t* data, size_t len, uint32_t timeout_ms)
 {
     if (!bus || !bus->_impl || !data || len == 0) return VFS_ERR_INVAL;
+
+    if (xPortInIsrContext()) {
+        DRV_LOGE(TAG, "I2C read from ISR forbidden");
+        return VFS_ERR_INVAL;
+    }
+
     hal_i2c_impl_t* impl = (hal_i2c_impl_t*)bus->_impl;
 
     if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return VFS_ERR_BUSY;
@@ -191,6 +210,12 @@ static int i2c_read_write_imp(hal_i2c_bus_t* bus, uint8_t addr,
                               uint8_t* rdata, size_t rlen, uint32_t timeout_ms)
 {
     if (!bus || !bus->_impl || !wdata || !rdata || wlen == 0 || rlen == 0) return VFS_ERR_INVAL;
+
+    if (xPortInIsrContext()) {
+        DRV_LOGE(TAG, "I2C write_read from ISR forbidden");
+        return VFS_ERR_INVAL;
+    }
+
     hal_i2c_impl_t* impl = (hal_i2c_impl_t*)bus->_impl;
 
     if (osal_mutex_lock(impl->lock, timeout_ms) != 0) return VFS_ERR_BUSY;
@@ -411,3 +436,5 @@ hal_i2c_bus_t* device_get_i2c_bus(device_t* dev)
     if (!priv) return NULL;
     return &priv->bus;
 }
+
+DRIVER_REGISTER(i2c, "esp32,i2c-bus", i2c_probe, i2c_remove);

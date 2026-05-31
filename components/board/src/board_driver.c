@@ -157,13 +157,17 @@ void system_safety_hardware_shutdown(const char* reason)
         }
     }
 
-    hal_cpu_emergency_stop_all_cores();
+    hal_pwm_force_stop_all();
 
     for (int i = 0; i < g_safety_pin_count; i++) {
         hal_gpio_set_level_fast(g_safety_pins[i].pin, g_safety_pins[i].safe_level);
     }
 
-    hal_pwm_force_stop_all();
+    hal_cpu_emergency_stop_all_cores();
+
+    /* 强制点亮红色 LED 并启动硬件蜂鸣器 (寄存器直写, 不依赖 RTOS)
+     * 仅当 emergency_stop 未真正冻结 GPIO 写时有效 */
+    gpio_set_level(BOARD_SAFE_STATE_FAULT_LED_PIN, 1);
 
     while (1) { ; }
 }

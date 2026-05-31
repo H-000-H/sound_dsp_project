@@ -33,6 +33,10 @@ bool TcpClient::connect(const uint8_t* ip, uint16_t port)
     m_impl->socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (m_impl->socket_fd < 0) return false;
 
+    struct timeval snd_timeout = { .tv_sec = 3, .tv_usec = 0 };
+    setsockopt(m_impl->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_timeout, sizeof(snd_timeout));
+    setsockopt(m_impl->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &snd_timeout, sizeof(snd_timeout));
+
     struct sockaddr_in dest = {};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(port);

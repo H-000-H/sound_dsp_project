@@ -1,4 +1,5 @@
 #include "lvgl_main.hpp"
+#include "lvgl_cmd.hpp"
 #include "esp_heap_caps.h"
 
 #include "device.h"
@@ -6,6 +7,7 @@
 #include "gpio_key_driver.h"
 #include "key_input.hpp"
 #include "event_bus.hpp"
+#include "system_wdt.hpp"
 
 #include "ui/screen/inc/status_bar.hpp"
 #include "ui/screen/inc/lock_screen.hpp"
@@ -14,13 +16,9 @@
 /*====================================================================*/
 lv_group_t* main_group;
 
-static void (*s_defer_fn)(void*) = nullptr;
-static void* s_defer_arg = nullptr;
-
 void lvgl_defer(void (*fn)(void*), void* arg)
 {
-    s_defer_fn   = fn;
-    s_defer_arg  = arg;
+    lvgl_defer_post(fn, arg);
 }
 /*====================================================================*/
 
@@ -48,12 +46,12 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
 
 static void* lvgl_alloc_buf(size_t sz)
 {
-    /* 优先内部 RAM（避免 PSRAM cache 问题导致花屏）*/
+    /* 优先内部 RAM + 64 字节 Cache-Line 对齐 (ESP32-S3 Cache Line = 64B) */
     uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA;
     if (USE_LVGL_PRAM) caps = MALLOC_CAP_SPIRAM;
-    void* p = heap_caps_malloc(sz, caps);
-    if (!p && !USE_LVGL_PRAM) p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
-    if (!p) p = heap_caps_malloc(sz, MALLOC_CAP_DMA);
+    void* p = heap_caps_aligned_alloc(64, sz, caps);
+    if (!p && !USE_LVGL_PRAM) p = heap_caps_aligned_alloc(64, sz, MALLOC_CAP_SPIRAM);
+    if (!p) p = heap_caps_aligned_alloc(64, sz, MALLOC_CAP_DMA);
     return p;
 }
 
@@ -230,6 +228,7 @@ void lvgl_main()
     key_map_init();
 
     lvgl_mutex_init();
+    lvgl_cmd_init();
     lv_tick_init();
     lvgl_display_init();
 
@@ -250,17 +249,13 @@ void lvgl_main()
 
         lvgl_mutex_lock();
         lv_timer_handler();
+        while (lvgl_cmd_process()) {}
         lvgl_mutex_unlock();
 
-        if (s_defer_fn)
-        {
-            auto fn  = s_defer_fn;
-            auto arg = s_defer_arg;
-            s_defer_fn  = nullptr;
-            s_defer_arg = nullptr;
-            fn(arg);
-        }
+        while (lvgl_defer_process()) {}
 
+        system_wdt_feed();
+        system_wdt_feed_rtc();
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 }

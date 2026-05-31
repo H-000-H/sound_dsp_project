@@ -316,6 +316,14 @@ void Band_Pass_filter(filter_config_t *f,uint32_t fs, uint32_t f0, uint32_t Q, i
     f->gain_db = gain_db;
 }
 
+/*
+ * IIR Direct-Form 1, Q31 fixed-point kernel.
+ *
+ * ⚠️ 反亚正常数 (Anti-Denormal):
+ *   本实现使用 int32×int32→int64 定点算术, 不存在 IEEE 754 浮点亚正常数问题.
+ *   若未来迁移至 float/double IIR: 必须在反馈环中注入 ~1e-15f 直流抖动
+ *   并启用 Flush-to-Zero (FTZ) 模式, 防止 FPU 软件异常导致 10-100× 延迟尖刺.
+ */
 void filter_process(filter_config_t *f,const int32_t *in, int32_t *out, uint32_t len)
 {
     int32_t b0 = f->b0, b1 = f->b1, b2 = f->b2;

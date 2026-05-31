@@ -1,8 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
-#include <string>
+#include <cstring>
 
 struct thingscloud_attr_t
 {
@@ -17,7 +16,7 @@ struct thingscloud_attr_t
 class ThingsCloudApp
 {
 public:
-    using sensor_cb_t = std::function<void(float* temp, uint32_t* humi)>;
+    using sensor_cb_t = void (*)(float* temp, uint32_t* humi);
 
     static ThingsCloudApp& get_instance();
 
@@ -39,11 +38,9 @@ public:
     void set_mqtt_auto(bool enable) { m_mqtt_auto = enable; }
     bool is_mqtt_auto() const { return m_mqtt_auto; }
 
-    /** 注册 WiFi 状态回调 (由 app 层注册, 解耦 service → app) */
     using wifi_state_cb_t = void (*)(bool connected);
     void set_wifi_state_cb(wifi_state_cb_t cb) { m_wifi_state_cb = cb; }
 
-    /** 内部 WiFi 事件组 (void* 隐藏 FreeRTOS EventGroupHandle_t) */
     void* wifi_evt();
     void on_wifi_connected();
     void on_connect_done() { m_wifi_connecting = false; }
@@ -56,18 +53,25 @@ private:
 
     void on_wifi_disconnected();
 
-    std::string m_ssid;
-    std::string m_pass;
-    std::string m_mqtt_uri;
-    std::string m_mqtt_client_id;
-    std::string m_mqtt_user;
-    std::string m_mqtt_pass;
+    /* 固定长度 char 数组替代 std::string — 零堆分配 */
+    static constexpr size_t kSsidMax = 33;
+    static constexpr size_t kPassMax = 65;
+    static constexpr size_t kUriMax = 129;
+    static constexpr size_t kClientIdMax = 65;
+    static constexpr size_t kUserMax = 65;
+
+    char m_ssid[kSsidMax] = {};
+    char m_pass[kPassMax] = {};
+    char m_mqtt_uri[kUriMax] = {};
+    char m_mqtt_client_id[kClientIdMax] = {};
+    char m_mqtt_user[kUserMax] = {};
+    char m_mqtt_pass[kPassMax] = {};
     uint16_t m_keepalive = 60;
     uint32_t m_rgb_gpio = 0;
     float m_last_temp = 0.0f;
     uint32_t m_last_humi = 0;
-    void* m_mqtt_task = nullptr;          /* TaskHandle_t (隐藏 FreeRTOS 细节) */
-    void* m_wifi_evt = nullptr;           /* EventGroupHandle_t */
+    void* m_mqtt_task = nullptr;
+    void* m_wifi_evt = nullptr;
     wifi_state_cb_t m_wifi_state_cb = nullptr;
     volatile bool m_wifi_connected = false;
     volatile bool m_wifi_connecting = false;

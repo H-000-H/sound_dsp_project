@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "capability/led_engine.hpp"
+#include "mqtt_client.hpp"
 
 class CloudService
 {
@@ -23,7 +24,11 @@ private:
     CloudService(const CloudService&) = delete;
     CloudService& operator=(const CloudService&) = delete;
 
+    void wifi_connect();
+    void mqtt_init_and_connect();
+
     bool m_inited = false;
     bool m_started = false;
     led_engine_t m_led;
+    MqttConfig m_mqtt_cfg;
 };

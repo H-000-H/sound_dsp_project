@@ -3,16 +3,18 @@
 #include "device.h"
 #include "display.h"
 #include "esp_log.h"
-#include <stdlib.h>
+#include <string.h>
 
 static const char* kTag = "render_engine";
 
-typedef struct 
+typedef struct
 {
     device_t* lcd_dev;
     int width;
     int height;
 } render_engine_impl_t;
+
+static render_engine_impl_t s_eng_impl;
 
 static int eng_init(render_engine_t* eng)
 {
@@ -76,7 +78,7 @@ static void eng_deinit(render_engine_t* eng)
     if (!eng || !eng->_impl) return;
     render_engine_impl_t* impl = (render_engine_impl_t*)eng->_impl;
     display_fill_screen(impl->lcd_dev, 0x0000, 500);
-    free(impl);
+    memset(impl, 0, sizeof(*impl));
     eng->_impl = NULL;
 }
 
@@ -89,5 +91,5 @@ void render_engine_init_struct(render_engine_t* eng)
     eng->set_backlight = eng_set_backlight;
     eng->get_display_size = eng_get_display_size;
     eng->deinit = eng_deinit;
-    eng->_impl = calloc(1, sizeof(render_engine_impl_t));
+    eng->_impl = &s_eng_impl;
 }

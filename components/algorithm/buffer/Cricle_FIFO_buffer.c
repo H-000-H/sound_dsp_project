@@ -1,93 +1,112 @@
-/*循环缓冲区源码*/
+/*
+ * Lock-Free SPSC Ring Buffer — see m_buffer.h for concurrency contract.
+ * DO NOT add a second producer or consumer to the same FIFO_Type_Def
+ * without an external Mutex.
+ */
 #include "m_buffer.h"
-void fifo_init(FIFO_Type_Def*handle,Fifo_Data_type *buf,uint16_t size)
+
+void fifo_init(FIFO_Type_Def* handle, Fifo_Data_type* buf, uint16_t size)
 {
-    handle->buf=buf;
-    handle->size=size;
-    handle->r_ptr=0;
-    handle->w_ptr=0;
+    handle->buf = buf;
+    handle->size = size;
+    atomic_init(&handle->r_ptr, 0);
+    atomic_init(&handle->w_ptr, 0);
 }
 
-bool fifo_write_data(FIFO_Type_Def*handle,Fifo_Data_type data)
+bool fifo_write_data(FIFO_Type_Def* handle, Fifo_Data_type data)
 {
-    if(fifo_isfull(handle))return false;
-    handle->buf[handle->w_ptr]=data;
-    handle->w_ptr=(handle->w_ptr+1)%(handle->size);
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_acquire);
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_relaxed);
+    if (((w + 1) % handle->size) == r) return false;
+
+    handle->buf[w] = data;
+    atomic_store_explicit(&handle->w_ptr, (uint16_t)((w + 1) % handle->size), memory_order_release);
     return true;
 }
 
-uint16_t fifo_write_block(FIFO_Type_Def*handle, const Fifo_Data_type* p_data, uint16_t len)
+uint16_t fifo_write_block(FIFO_Type_Def* handle, const Fifo_Data_type* p_data, uint16_t len)
 {
-    /*计算剩余空间并且保障了不会覆盖读指针*/
-    uint16_t free_len=(handle->size-1)-fifo_get_count(handle);
-    if(free_len<len)
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_acquire);
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_relaxed);
+    uint16_t used = (w + handle->size - r) % handle->size;
+    uint16_t free_len = (handle->size - 1) - used;
+    if (free_len < len)
     {
-        len=free_len;
+        len = free_len;
     }
-    if(free_len==0)
+    if (free_len == 0)
     {
         return 0;
     }
 
-    uint16_t space_to_end =handle->size-handle->w_ptr;
-    if(space_to_end<len)
+    uint16_t space_to_end = handle->size - w;
+    if (space_to_end >= len)
     {
-        memcpy(&handle->buf[handle->w_ptr],p_data,len*sizeof(Fifo_Data_type));
-    }
-    else/*因为free_len已经确保了不会掩盖读指针所以可以直接写将数据分两段一端到size一段到r_ptr-1*/
-    {   
-        memcpy(&handle->buf[handle->w_ptr],p_data,space_to_end*sizeof(Fifo_Data_type));
-        memcpy(&handle->buf[0],p_data+space_to_end,(len-space_to_end)*sizeof(Fifo_Data_type));
-    }
-    handle->w_ptr=(handle->w_ptr+len)%handle->size;
-    return len;
-}
-
-uint16_t fifo_read_block(FIFO_Type_Def*handle, Fifo_Data_type* p_data, uint16_t len)
-{
-    memset(p_data,0,sizeof(p_data));
-    uint16_t count=fifo_get_count(handle);
-    if(len>count)
-    {
-        len=count;
-    }
-    if(count==0) return 0;
-    /*计算到数组结尾还有多少空间*/
-    uint16_t space_to_end=handle->size-handle->r_ptr;
-    if(space_to_end>len)
-    {
-        memcpy(p_data,&handle->buf[handle->r_ptr],len*sizeof(Fifo_Data_type));
+        memcpy(&handle->buf[w], p_data, len * sizeof(Fifo_Data_type));
     }
     else
     {
-        memcpy(p_data,&handle->buf[handle->r_ptr],space_to_end*sizeof(Fifo_Data_type));
-        memcpy(p_data+space_to_end,&handle->buf[0],(len-space_to_end)*sizeof(Fifo_Data_type));
+        memcpy(&handle->buf[w], p_data, space_to_end * sizeof(Fifo_Data_type));
+        memcpy(&handle->buf[0], p_data + space_to_end, (len - space_to_end) * sizeof(Fifo_Data_type));
     }
-    handle->r_ptr=(handle->r_ptr+len)%handle->size;
+    atomic_store_explicit(&handle->w_ptr, (uint16_t)((w + len) % handle->size), memory_order_release);
     return len;
 }
 
-bool fifo_read_data(FIFO_Type_Def*handle,Fifo_Data_type*p_data)
+bool fifo_read_data(FIFO_Type_Def* handle, Fifo_Data_type* p_data)
 {
-    if(fifo_isempty(handle)) return false;
-    *p_data=handle->buf[handle->r_ptr];
-    handle->r_ptr=(handle->r_ptr+1)%handle->size;
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_acquire);
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_relaxed);
+    if (r == w) return false;
+
+    *p_data = handle->buf[r];
+    atomic_store_explicit(&handle->r_ptr, (uint16_t)((r + 1) % handle->size), memory_order_release);
     return true;
 }
 
-uint16_t fifo_get_count(FIFO_Type_Def*handle)
+uint16_t fifo_read_block(FIFO_Type_Def* handle, Fifo_Data_type* p_data, uint16_t len)
 {
-    /*因为是环形缓冲区所以必须加上size不然会出现负数*/
-    return (handle->w_ptr + handle->size - handle->r_ptr) % handle->size;
+    memset(p_data, 0, sizeof(*p_data) * len);
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_acquire);
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_relaxed);
+    uint16_t count = (w + handle->size - r) % handle->size;
+    if (len > count)
+    {
+        len = count;
+    }
+    if (count == 0) return 0;
+
+    uint16_t space_to_end = handle->size - r;
+    if (space_to_end >= len)
+    {
+        memcpy(p_data, &handle->buf[r], len * sizeof(Fifo_Data_type));
+    }
+    else
+    {
+        memcpy(p_data, &handle->buf[r], space_to_end * sizeof(Fifo_Data_type));
+        memcpy(p_data + space_to_end, &handle->buf[0], (len - space_to_end) * sizeof(Fifo_Data_type));
+    }
+    atomic_store_explicit(&handle->r_ptr, (uint16_t)((r + len) % handle->size), memory_order_release);
+    return len;
 }
 
-bool fifo_isempty(FIFO_Type_Def*handle)
+uint16_t fifo_get_count(FIFO_Type_Def* handle)
 {
-    return (handle->r_ptr==handle->w_ptr);
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_acquire);
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_acquire);
+    return (w + handle->size - r) % handle->size;
 }
 
-bool fifo_isfull(FIFO_Type_Def*handle)
+bool fifo_isempty(FIFO_Type_Def* handle)
 {
-    /*约定的环形缓冲区差一个就是满了*/
-    return (((handle->w_ptr+1)%handle->size)==handle->r_ptr);
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_relaxed);
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_acquire);
+    return r == w;
+}
+
+bool fifo_isfull(FIFO_Type_Def* handle)
+{
+    uint16_t r = atomic_load_explicit(&handle->r_ptr, memory_order_acquire);
+    uint16_t w = atomic_load_explicit(&handle->w_ptr, memory_order_relaxed);
+    return ((w + 1) % handle->size) == r;
 }

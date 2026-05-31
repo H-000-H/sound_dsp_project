@@ -10,6 +10,9 @@
 
 static const char* TAG = "hal_adc";
 
+static uint8_t s_config_lock_storage[OSAL_SPINLOCK_STORAGE_SIZE] __attribute__((aligned(4)));
+static osal_spinlock_t* s_config_lock = nullptr;
+
 typedef struct {
     adc_oneshot_unit_handle_t handle;
     uint32_t configured_mask;
@@ -42,16 +45,29 @@ static adc_bitwidth_t adc_width_from_int(int bitwidth)
 static int adc_config_channel_once(adc_priv_t* priv, int channel, int atten, int bitwidth)
 {
     if (!priv || channel < 0 || channel >= 32) return -1;
+
+    if (!s_config_lock) {
+        osal_spinlock_create_static(&s_config_lock, s_config_lock_storage, sizeof(s_config_lock_storage));
+    }
+
+    osal_spinlock_lock(s_config_lock);
     uint32_t bit = 1UL << (uint32_t)channel;
-    if (priv->configured_mask & bit) return 0;
+    if (priv->configured_mask & bit) {
+        osal_spinlock_unlock(s_config_lock);
+        return 0;
+    }
 
     adc_oneshot_chan_cfg_t chan_cfg = {
         .atten = adc_atten_from_int(atten),
         .bitwidth = adc_width_from_int(bitwidth),
     };
     esp_err_t ret = adc_oneshot_config_channel(priv->handle, channel, &chan_cfg);
-    if (ret != ESP_OK) return (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+    if (ret != ESP_OK) {
+        osal_spinlock_unlock(s_config_lock);
+        return (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+    }
     priv->configured_mask |= bit;
+    osal_spinlock_unlock(s_config_lock);
     return 0;
 }
 
@@ -126,3 +142,5 @@ static int adc_remove(device_t* dev)
     }
     return 0;
 }
+
+DRIVER_REGISTER(adc, "esp32,adc", adc_probe, adc_remove);

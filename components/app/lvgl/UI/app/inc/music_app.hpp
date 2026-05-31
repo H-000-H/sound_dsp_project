@@ -25,6 +25,7 @@ class MusicApp : public AppBase
 public:
     void show() override;
     void hide() override;
+    void on_destroy() override;
     lv_obj_t* screen() const override { return m_screen; }
     const char* app_name() const override { return "音乐"; }
     const lv_image_dsc_t* app_icon() const override;

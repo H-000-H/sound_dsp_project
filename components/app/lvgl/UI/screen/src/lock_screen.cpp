@@ -100,3 +100,14 @@ void lock_screen_show(void)
     lv_group_focus_obj(s_key_handler);
     lv_obj_add_event_cb(s_key_handler, unlock_event_cb, LV_EVENT_KEY, nullptr);
 }
+
+void lock_screen_destroy(void)
+{
+    s_unlocking = false;
+    if (s_screen)
+    {
+        lv_obj_del(s_screen);
+        s_screen = nullptr;
+        s_key_handler = nullptr;
+    }
+}

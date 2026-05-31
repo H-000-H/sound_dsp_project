@@ -5,6 +5,7 @@
 #include "VFS.h"
 #include <string.h>
 #include "board_config.h"
+#include "esp_heap_caps.h"
 
 static const char* kTag = "hal_i2s_bus";
 
@@ -150,6 +151,11 @@ static int i2s_write_impl(hal_i2s_bus_t* bus, const int16_t* samples,
         return VFS_ERR_INVAL;
     }
 
+    if (!esp_ptr_internal(samples)) {
+        DRV_LOGE(kTag, "I2S DMA buffer in PSRAM rejected — cache incoherency risk");
+        return VFS_ERR_INVAL;
+    }
+
     hal_i2s_impl_t* impl = (hal_i2s_impl_t*)bus->_impl;
     size_t bytes_written = 0;
 
@@ -276,3 +282,5 @@ static int i2s_remove(device_t* dev)
     }
     return 0;
 }
+
+DRIVER_REGISTER(i2s, "esp32,i2s-bus", i2s_probe, i2s_remove);

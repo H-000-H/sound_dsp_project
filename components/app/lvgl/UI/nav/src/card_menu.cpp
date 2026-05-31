@@ -426,3 +426,30 @@ void card_menu_show(void)
     s_nav_timer = lv_timer_create(nav_timer_cb, 50, nullptr);
     lv_screen_load(s_screen);
 }
+
+void card_menu_destroy(void)
+{
+    s_state = MenuState::kIdle;
+    s_page = 0;
+
+    if (s_nav_timer)
+    {
+        lv_timer_delete(s_nav_timer);
+        s_nav_timer = nullptr;
+    }
+
+    if (s_screen)
+    {
+        lv_obj_del(s_screen);
+        s_screen = nullptr;
+    }
+
+    s_card_row = nullptr;
+    s_key_handler = nullptr;
+    s_time_label = nullptr;
+    for (int i = 0; i < APP_COUNT; i++)
+    {
+        s_cards[i] = nullptr;
+        s_dots[i]  = nullptr;
+    }
+}

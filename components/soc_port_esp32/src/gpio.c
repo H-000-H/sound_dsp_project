@@ -53,6 +53,11 @@ int hal_gpio_get_level(hal_pin_t pin)
     return gpio_get_level((gpio_num_t)pin);
 }
 
+/*
+ * TOCTOU 风险: read(gpio_get_level) 与 write(gpio_set_level) 非原子.
+ * 多任务/ISR 对同一引脚并发 toggle 可能导致翻转丢失.
+ * 预期使用场景: 单生产者控制独占引脚.
+ */
 int hal_gpio_toggle(int pin)
 {
     if (!gpio_pin_valid(pin)) return VFS_ERR_INVAL;
@@ -155,3 +160,5 @@ static int gpio_ctrl_remove(device_t* dev)
     }
     return 0;
 }
+
+DRIVER_REGISTER(gpio, "esp32,gpio", gpio_ctrl_probe, gpio_ctrl_remove);

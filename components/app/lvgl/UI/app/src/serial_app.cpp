@@ -1,4 +1,4 @@
-﻿#include "serial_app.hpp"
+#include "serial_app.hpp"
 #include "theme.hpp"
 #include "ui/app/serial/serial.hpp"
 #include "ui/nav/inc/card_menu.hpp"
@@ -407,4 +407,16 @@ void SerialApp::hide()
     m_paused = false;
     m_view_page = 0;
     s_scroll_offset = 0;
+}
+
+void SerialApp::on_destroy()
+{
+    hide();
+    if (m_screen)
+    {
+        lv_obj_del(m_screen);
+        m_screen = nullptr;
+    }
+    m_output = m_baud_val = m_term_val = nullptr;
+    m_view_lbl = m_clear_lbl = m_conn_dot = nullptr;
 }

@@ -10,6 +10,9 @@ extern "C" {
 
 typedef struct hal_spi_bus hal_spi_bus_t;
 
+struct device_instance;
+typedef struct device_instance device_t;
+
 typedef struct
 {
     int host_id;
@@ -33,12 +36,23 @@ struct hal_spi_bus
     int (*init)(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg,
                 const hal_spi_device_config_t* dev_cfg);
     int (*write)(hal_spi_bus_t* bus, const uint8_t* data, size_t len);
+    int (*write_top_half)(hal_spi_bus_t* bus, const uint8_t* data, size_t len);
     int (*read)(hal_spi_bus_t* bus, uint8_t* data, size_t len);
     int (*deinit)(hal_spi_bus_t* bus);
     void* _impl;
 };
 
 void hal_spi_bus_init_struct(hal_spi_bus_t* bus);
+
+/*
+ * 安全状态强制停机: 直接复位所有 SPI 外设 (含 DMA 引擎),
+ * 切断任何进行中的显示帧传输, 防止 Safe State 中屏幕乱闪。
+ * 调用时机: 进入 enter_safe_state() 之前, 此时 RTOS 尚未冻结。
+ */
+void hal_spi_force_stop(void);
+
+/* ── 强类型 SPI 总线访问 (替代 ioctl, MISRA C Rule 11.3 合规) ── */
+hal_spi_bus_t* device_get_spi_bus(device_t* dev);
 
 #define SPI_CMD_DEINIT      0x40
 #define SPI_CMD_READ        0x41

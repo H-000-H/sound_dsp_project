@@ -1,6 +1,7 @@
 #include "mqtt_client.hpp"
 #if CONFIG_ENABLE_SERVICE_MQTT
 
+#include <atomic>
 #include <cstring>
 
 #include "esp_log.h"
@@ -9,7 +10,7 @@
 struct MqttClient::Impl
 {
     esp_mqtt_client_handle_t client = nullptr;
-    bool is_connected = false;
+    std::atomic<bool> is_connected{false};
     MqttConfig cfg;
 };
 

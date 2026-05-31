@@ -1,6 +1,9 @@
 #pragma once
 #include "mp3dec.h"
 #include "EQ.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/stream_buffer.h"
+#include "freertos/task.h"
 
 class MP3
 {
@@ -16,5 +19,4 @@ private:
     MP3FrameInfo info;
     int16_t m_buffer[8156]={0};
     int32_t q31_buffer[8156]={0};
-protected:
 };

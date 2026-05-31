@@ -282,3 +282,5 @@ static int rmt_led_remove(device_t* dev)
     }
     return 0;
 }
+
+DRIVER_REGISTER(rmt_led, "esp32,rmt-tx", rmt_led_probe, rmt_led_remove);

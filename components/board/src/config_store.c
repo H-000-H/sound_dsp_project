@@ -53,11 +53,20 @@ static const char* find_json_value(const char* key)
     const char* json = system_config_json_start;
     if (!json || !key) return NULL;
 
-    const char* found = strstr(json, key);
+    size_t key_len = strlen(key);
+    if (key_len + 3 > 63) return NULL;
+
+    char search_pat[64];
+    search_pat[0] = '"';
+    memcpy(search_pat + 1, key, key_len);
+    search_pat[key_len + 1] = '"';
+    search_pat[key_len + 2] = ':';
+    search_pat[key_len + 3] = '\0';
+
+    const char* found = strstr(json, search_pat);
     if (!found) return NULL;
 
-    const char* colon = strchr(found, ':');
-    return colon ? colon + 1 : NULL;
+    return found + key_len + 3;
 }
 
 static cs_entry_t* find_entry(const char* key)

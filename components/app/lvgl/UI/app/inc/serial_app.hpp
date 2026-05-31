@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "app_base.hpp"
 #include <cstdint>
 
@@ -17,6 +17,7 @@ class SerialApp : public AppBase {
 public:
     virtual void show() override;
     virtual void hide() override;
+    virtual void on_destroy() override;
     lv_obj_t* screen() const override { return m_screen; }
     const char* app_name() const override { return "串口调试"; }
     const lv_image_dsc_t* app_icon() const override;

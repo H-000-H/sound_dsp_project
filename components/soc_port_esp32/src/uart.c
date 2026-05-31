@@ -231,3 +231,5 @@ static int uart_remove(device_t* dev)
     }
     return 0;
 }
+
+DRIVER_REGISTER(uart, "esp32,uart", uart_probe, uart_remove);

@@ -7,6 +7,7 @@ public:
     static constexpr int ROW_COUNT = 6;
     void show() override;
     void hide() override;
+    void on_destroy() override;
     lv_obj_t* screen() const override { return m_screen; }
     const char* app_name() const override { return "设置"; }
     const lv_image_dsc_t* app_icon() const override;

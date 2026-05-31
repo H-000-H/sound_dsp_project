@@ -1,10 +1,14 @@
 #include "hal_spi_bus.h"
 
-#include "driver/spi_master.h"
-#include "osal.h"
-#include "VFS.h"
-#include <string.h>
 #include "board_config.h"
+#include "driver/spi_master.h"
+#include "esp_heap_caps.h"
+#include "esp_private/periph_ctrl.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "osal.h"
+#include "soc/periph_defs.h"
+#include "VFS.h"
 
 static const char* kTag = "hal_spi_bus";
 #define SPI_LOCK_TIMEOUT_MS OSAL_LOCK_TIMEOUT_DEFAULT_MS
@@ -51,6 +55,9 @@ static int spi_init_impl(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg
         ret = -1;
         goto err_pool;
     }
+
+    /* 软复位后外设寄存器可能残留半传输状态, 强制硬件复位 */
+    periph_module_reset(impl->host == SPI3_HOST ? PERIPH_SPI3_MODULE : PERIPH_SPI2_MODULE);
 
     spi_bus_config_t esp_bus_cfg = {
         .mosi_io_num = bus_cfg->mosi,
@@ -101,6 +108,16 @@ static int spi_write_impl(hal_spi_bus_t* bus, const uint8_t* data, size_t len)
         return -1;
     }
 
+    if (xPortInIsrContext()) {
+        DRV_LOGE(kTag, "SPI write from ISR forbidden");
+        return VFS_ERR_INVAL;
+    }
+
+    if (!esp_ptr_internal(data)) {
+        DRV_LOGE(kTag, "DMA buffer in PSRAM rejected — cache incoherency risk");
+        return VFS_ERR_INVAL;
+    }
+
     hal_spi_impl_t* impl = (hal_spi_impl_t*)bus->_impl;
 
     if (len > impl->max_transfer_sz || len > (SIZE_MAX / 8U)) return VFS_ERR_INVAL;
@@ -119,10 +136,48 @@ static int spi_write_impl(hal_spi_bus_t* bus, const uint8_t* data, size_t len)
     return 0;
 }
 
+/* ── SPI top-half write: 无锁版本, 适用于已持有 VFS 设备锁的调用方 ── */
+static int spi_write_top_half_impl(hal_spi_bus_t* bus, const uint8_t* data, size_t len)
+{
+    if (bus == NULL || bus->_impl == NULL || data == NULL || len == 0) {
+        return -1;
+    }
+
+    if (!esp_ptr_internal(data)) {
+        DRV_LOGE(kTag, "DMA buffer in PSRAM rejected — cache incoherency risk");
+        return VFS_ERR_INVAL;
+    }
+
+    hal_spi_impl_t* impl = (hal_spi_impl_t*)bus->_impl;
+
+    if (len > impl->max_transfer_sz || len > (SIZE_MAX / 8U)) return VFS_ERR_INVAL;
+
+    spi_transaction_t trans = {
+        .length = len * 8U,
+        .tx_buffer = data,
+    };
+    esp_err_t ret = spi_device_transmit(impl->dev, &trans);
+    if (ret != ESP_OK) {
+        DRV_LOGE(kTag, "spi_device_transmit (top-half) failed: %d", ret);
+        return (ret == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
+    }
+    return 0;
+}
+
 static int spi_read_impl(hal_spi_bus_t* bus, uint8_t* data, size_t len)
 {
     if (bus == NULL || bus->_impl == NULL || data == NULL || len == 0) {
         return -1;
+    }
+
+    if (xPortInIsrContext()) {
+        DRV_LOGE(kTag, "SPI read from ISR forbidden");
+        return VFS_ERR_INVAL;
+    }
+
+    if (!esp_ptr_internal(data)) {
+        DRV_LOGE(kTag, "DMA rx buffer in PSRAM rejected — cache incoherency risk");
+        return VFS_ERR_INVAL;
     }
 
     hal_spi_impl_t* impl = (hal_spi_impl_t*)bus->_impl;
@@ -164,6 +219,7 @@ void hal_spi_bus_init_struct(hal_spi_bus_t* bus)
     if (bus == NULL) return;
     bus->init = spi_init_impl;
     bus->write = spi_write_impl;
+    bus->write_top_half = spi_write_top_half_impl;
     bus->read = spi_read_impl;
     bus->deinit = spi_deinit_impl;
     bus->_impl = NULL;
@@ -178,6 +234,15 @@ typedef struct {
 
 static spi_priv_t s_spi_priv_pool[SPI_COUNT];
 static uint8_t s_spi_priv_used[SPI_COUNT];
+
+/* ── 强类型 SPI 总线访问器 (替代 ioctl, MISRA C 11.3 合规) ── */
+hal_spi_bus_t* device_get_spi_bus(device_t* dev)
+{
+    if (!dev) return NULL;
+    spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
+    if (!priv) return NULL;
+    return &priv->bus;
+}
 
 static int spi_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
@@ -270,3 +335,5 @@ static int spi_remove(device_t* dev)
     }
     return 0;
 }
+
+DRIVER_REGISTER(spi, "esp32,spi-bus", spi_probe, spi_remove);

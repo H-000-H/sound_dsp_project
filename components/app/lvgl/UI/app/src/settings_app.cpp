@@ -364,3 +364,15 @@ void SettingsApp::hide()
 {
     /* 设置页不销毁，下次 show 时重建 */
 }
+
+void SettingsApp::on_destroy()
+{
+    if (m_screen)
+    {
+        lv_obj_del(m_screen);
+        m_screen = nullptr;
+    }
+    for (auto& r : m_rows) r = nullptr;
+    m_togs[0] = m_togs[1] = m_togs[2] = m_togs[3] = nullptr;
+    m_bar = m_bright_lbl = nullptr;
+}

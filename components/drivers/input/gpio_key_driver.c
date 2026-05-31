@@ -211,7 +211,13 @@ static int gpio_key_remove(device_t* dev)
 
 DRIVER_REGISTER(gpio_key, "gpio-keys", gpio_key_probe, gpio_key_remove);
 
-/* ── ISR: 消抖 + 推入 FIFO ── */
+/* ── ISR: 消抖 + 推入 FIFO ──
+ *
+ * ⛔ 铁律: ISR 中严禁 float/double 运算.
+ *   FreeRTOS 默认不保存 FPU 上下文 (Lazy Stacking).
+ *   ISR 内浮点运算会覆写被中断 Task 的 FPU 寄存器 → NaN / 数据腐败.
+ *   本 ISR 使用纯整数 (uint32_t, SPSC FIFO), 无需 FPU.
+ */
 static void IRAM_ATTR gpio_key_isr_handler(void* arg)
 {
     key_entry_t* k = (key_entry_t*)arg;

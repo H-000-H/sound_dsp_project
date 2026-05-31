@@ -110,7 +110,9 @@ static int log_vprintf(const char* fmt, va_list args)
 }
 
 /* ==================================================================== */
-/*  LVGL 渲染                                            */
+/* ==================================================================== */
+/*  LVGL 渲染 — 定时器回调禁止阻塞 (Mutex/Delay/Queue 超时).              */
+/*  ioctl 超时 = 0, 256 字节非阻塞检查, 无数据立即返回.                  */
 /* ==================================================================== */
 void SerialApp::refr_timer_cb(lv_timer_t* t)
 {
@@ -122,8 +124,8 @@ void SerialApp::refr_timer_cb(lv_timer_t* t)
     if (s_uart_dev)
     {
         uint8_t buf[256];
-        uart_read_arg_t rarg = { .data = buf, .len = sizeof(buf) - 1, .timeout_ms = 100 };
-        int n = device_ioctl(s_uart_dev, UART_CMD_READ, &rarg, sizeof(rarg), 1000);
+        uart_read_arg_t rarg = { .data = buf, .len = sizeof(buf) - 1, .timeout_ms = 0 };
+        int n = device_ioctl(s_uart_dev, UART_CMD_READ, &rarg, sizeof(rarg), 0);
         if (n > 0)
         {
             if (app->m_term_mode == 1)
