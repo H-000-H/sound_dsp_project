@@ -2,8 +2,8 @@
 
 > **面向对象、极致解耦的嵌入式硬软件一体化架构白皮书**
 >
-> ⏱️ **最后更新**：2026-05-31
-> 📌 **核心宗旨**：单向依赖、静态内存、物理与逻辑绝对隔离
+> ⏱️ **最后更新**：2026-05-31 | 25 轮架构审计后
+> 📌 **核心宗旨**：单向依赖、静态内存、物理与逻辑绝对隔离、7 层纵深安全防御
 
 ---
 
@@ -236,19 +236,19 @@ DRIVER_REGISTER(max98357a, "maxim,max98357a", max98357a_probe, max98357a_remove)
 | 模块 | 核心职责 | 外部依赖限制 |
 |------|----------|-------------|
 | `app/lvgl` | 240×240 GUI (锁屏/菜单/音乐/设置/串口终端) | service, system |
-| `core/` | Lifecycle / EventBus / ConfigStore / Log | **绝对零依赖** |
-| `system/` | SystemRuntime / TaskManager / 服务注册表 | core |
+| `core/` | Lifecycle / EventBus / production_log / critical_data | **绝对零依赖** |
+| `system/` | SystemRuntime / TaskManager / SafeState / WDT / Scrubber | core |
 | `service/audio` | MP3 帧解码、数字音量平滑控制、I2S 功放 | capability, core |
 | `service/ui` | LVGL 主循环守护、App 层注册 | capability, core |
 | `service/cloud` | WiFi 态管理 / MQTT 通信 / 遥测上报 | capability, core |
 | `service/input` | GPIO 按键轮询扫描、去抖、LVGL 键值注入 | capability, core |
-| `media/` | MP3 解码器封装 + I2S 输出 + EQ 滤波 | board, hal_if, core, algorithm |
+| `media/` | MP3 解码器封装 + I2S 异步双缓冲输出 + EQ 滤波 | board, hal_if, core, algorithm |
 | `capability/` | 硬能力门面层，原子动作接口 | board, drivers |
-| `board/` | DTS 编译期结构体 + 运行时 device_t + VFS 路由 | drivers |
+| `board/` | DTS 编译期结构体 + 运行时 device_t + VFS 路由 + config_store A/B Slot | drivers |
 | `drivers/` | 外设驱动 (ST7789/MAX98357A/WS2812/gpio_key/light_sensor/pwm_backlight) | hal_if, osal |
-| `soc_port_esp32/` | ESP32 平台 HAL 实现 (SPI/I2C/UART/PWM/GPIO/RMT/I2S/ADC) | hal_if, osal |
+| `soc_port_esp32/` | ESP32 平台 HAL 实现 (SPI/I2C/UART/PWM/GPIO/RMT/I2S/ADC) + hal_force_stop | hal_if, osal |
 | `hal_if/` | 函数指针表接口定义 (纯头文件, 零实现) | **纯接口** |
-| `osal/` | OS 抽象层 (task/mutex/time/log/memory) | **纯接口** |
+| `osal/` | OS 抽象层 (task/mutex/time/log/memory/pool) | **纯接口** |
 | `config/` | 编译时开关 + 运行时 JSON 配置 | **零依赖** |
 | `algorithm/dsp/` | Biquad 定点滤波、多段 EQ | **纯计算** |
 
@@ -274,16 +274,101 @@ H(z) = ──────────────────────
 
 ---
 
-## 📏 8. 开发红线规范
+## 🛡️ 8. 安全架构与系统监控 (25 轮审计后)
+
+### 8.1 多层安全状态机
+
+```
+                          ┌──────────────────────────────┐
+                          │      OSAL_PANIC (L1)          │
+                          │  system_safety_hardware_      │
+                          │  shutdown(reason)             │
+                          │  ── portDISABLE_INTERRUPTS()  │
+                          │  ── GPIO 安全电平 (DTS 配置)  │
+                          │  ── hal_pwm_force_stop_all()  │
+                          │  ── hal_i2s_force_stop()      │
+                          │  ── hal_spi_force_stop()      │
+                          │  ── LED 红色常亮              │
+                          │  ── while(1) → WDT 复位       │
+                          └───────────┬──────────────────┘
+                                      │
+  ┌─────────────────────────┐         │         ┌─────────────────────────┐
+  │   EventBus 死锁 (L2)    │────► enter_safe ◄────│ 服务 init 失败 (L3)   │
+  │   dispatch 锁超时       │         state()       │  6 个致命接入点       │
+  └─────────────────────────┘                      └─────────────────────────┘
+                                                          │
+                                                          ▼
+                                                 ┌─────────────────────────┐
+                                                 │   enter_safe_state()    │
+                                                 │   1. hal_pwm_force_stop │
+                                                 │   2. hal_i2s_force_stop │
+                                                 │   3. hal_spi_force_stop │
+                                                 │   4. FAULT_LED 常亮     │
+                                                 │   5. LEDC 蜂鸣器 2Hz    │
+                                                 │   6. vTaskSuspendAll()  │
+                                                 │   7. while(1) 死循环    │
+                                                 └─────────────────────────┘
+```
+
+### 8.2 硬件级故障防御
+
+| 防御 | 机制 | 对抗目标 |
+|------|------|----------|
+| **RTC 硬件看门狗 (L5)** | 独立 32kHz RC 振荡器, 8s 超时, 物理电源复位 | CPU/总线卡死, SysTick 停摆 |
+| **Bootloop 防护 (L4)** | `RTC_DATA_ATTR` 计数器 ≥ 5 → 物理锁死, 禁止 Flash 写 | 传感器排线断裂 → 无限 Probe 失败 → Flash 烧穿 |
+| **Flash 位腐烂巡检 (L6)** | 32B chunk / 200ms, 后台 CRC32 比对, 失配 → Safe State | SPI Flash 电荷流失, X 光室/高温车间位翻转 |
+| **NMI 紧急标记 (L7)** | `IRAM_ATTR` 纯寄存器写入, 掉电保留 `RTC_CNTL_STORE0` | BOD NMI 双重崩溃, Flash Cache 禁用时取指失败 |
+| **栈水位监控** | `uxTaskGetStackHighWaterMark` + 512B 告警阈值, 30s 巡检 | 栈溢出前提前预警 |
+
+### 8.3 容错机制
+
+| 机制 | 描述 |
+|------|------|
+| **I2C 自动恢复** | 读/写/写读路径内建 9 脉冲恢复 + 1 次重试, SDA 短路检测 → `VFS_ERR_HW_FATAL` |
+| **EPROBE_DEFER** | 框架层 3 轮重试延迟探测, phandle 依赖未就绪时返回 `VFS_ERR_DEFER` |
+| **Config Store A/B Slot** | 双 Slot + CRC32 校验 + 原子翻转, 双坏 → 嵌入 JSON 出厂恢复 |
+| **production_log 黑匣子** | 32 × 128B 环形缓冲, NVS 持久化, `DRV_LOGE` 无条件写入, CLI/OTA 拉取 |
+| **MQTT 断连自愈** | WiFi 事件驱动, DISCONNECTED → 释放 FD, GOT_IP → 全新连接 |
+
+### 8.4 系统初始化序列 (SIOF 防御)
+
+```
+app_main()
+  ├── 9 个 Meyers Singleton 预触 (__cxa_guard 在单线程期完成)
+  ├── SystemRuntime::getInstance().start()
+  │     ├── safe_state_check_bootloop()     ← RTC_DATA_ATTR 计数
+  │     ├── system_wdt_init_rtc(8000)       ← RTC 硬件看门狗
+  │     ├── esp_netif_init / event_loop     ← 网络栈
+  │     ├── device_tree_init()              ← 编译期 DTS 装载
+  │     ├── board_driver_probe_all()        ← EPROBE_DEFER 重试
+  │     ├── EventBus::init()                ← 两段式, 非构造期分配
+  │     ├── AudioService::init()            ← 失败 → Safe State (L3)
+  │     ├── UiService::init()               ← 失败 → Safe State (L3)
+  │     ├── CloudService::init()            ← 失败 → Safe State (L3)
+  │     ├── EventBus::start() / post(Boot)
+  │     ├── system_wdt_init(3000)           ← TWDT
+  │     ├── 创建 UI Task (Core 1)           ← 栈水位监控注册
+  │     ├── 创建 Cloud Task (Core 0)        ← 栈水位监控注册
+  │     ├── system_scrubber_start()         ← Flash 位腐烂巡检
+  │     └── safe_state_clear_bootloop()     ← 正常启动, 清零计数器
+  └── [系统运行]
+```
+
+---
+
+## 📏 9. 开发红线规范
 
 | 原则 | 要求 |
 |------|------|
 | **沟通先行** | 改核心逻辑或引入新抽象前必须讨论 |
 | **适度封装** | 三个相似行 > 一个过早抽象。不设计未来需求 |
-| **文档同步** | 踩坑必须同步更新 `NOTICE.md`，注明日期 |
+| **文档同步** | 踩坑必须同步更新 `NOTICE.md`，注明日期与轮次 |
 | **C++ 极简** | 禁用 RTTI 与 try-catch。跨文件回调用纯静态成员函数或 C 指针 |
 | **驱动扩展** | 2 步：丢入 `drivers/` + `DRIVER_REGISTER` → 构建 |
 | **层级隔离** | `board/` / `hal_if/` / `core/` 不依赖上层；`drivers/` 不含 UI/App/LVGL |
+| **内存安全** | 禁止运行时堆分配。全部 BSS 静态池 + `aligned(64)` 对齐 |
+| **并发安全** | 禁止 `OSAL_WAIT_FOREVER`。锁超时 ≤ 500ms。ISR 内调用必须 `osal_in_isr` 分流 |
+| **安全契约** | 服务 init 失败必须调用 `enter_safe_state()`，不可静默降级 |
 
 ---
 
@@ -292,5 +377,6 @@ H(z) = ──────────────────────
 | 文档 | 位置 | 说明 |
 |------|------|------|
 | 项目总览 | [README.md](../README.md) | 选型理由、按键映射、快速开始、开发规范 |
-| 踩坑全记录 | [NOTICE.md](../NOTICE.md) | 架构演进史、重大 Bug、链接器/MSYS2 踩坑 |
+| 踩坑全记录 | [NOTICE.md](../NOTICE.md) | 25 轮架构演进史、107+ 项修复、根因分析 |
+| 安全架构总览 | [架构文档 §8](#🛡️-8-安全架构与系统监控-25-轮审计后) | L1-L7 防御体系、容错机制、初始化序列 |
 | DSP 算法 | `components/algorithm/dsp/README.md` | EQ 滤波器系数详细说明 |

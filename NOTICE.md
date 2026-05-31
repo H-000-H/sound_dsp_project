@@ -1,8 +1,93 @@
-# 驱动架构 IEC 61508 / IEC 62304 审计全记录
+# 📓 Sound DSP — 核心架构演进与踩坑全记录
 
-> **审计结论**: 原始代码在 7 个维度上同时违反工业级 (IEC 61508 §7.4) 和医疗级 (IEC 62304 Class C) 要求。经过十二轮重构，架构已对标 IEC 61508 / ISO 26262 工业/汽车/医疗级。
+> **审计结论**: 原始代码在 7 个维度上同时违反工业级 (IEC 61508 §7.4) 和医疗级 (IEC 62304 Class C) 要求。经过 **25 轮 / 107+ 项** 重构，覆盖 85+ 文件，最终架构对标 **IEC 61508 SIL 4 / ISO 26262 ASIL-D / FDA Class III**。
 
 ---
+
+## 📑 快速索引
+
+> **历史存档**: 第十四轮独立审查记录 (`architecture_review_14.md`) 内容已合并至第十四~十六轮明细下方。该文件作为归档保留。
+
+### 核心架构决策 (KAD)
+
+| 决策 | 轮次 | 影响范围 |
+|------|------|----------|
+| 编译期 DeviceTree (dtc-lite) | Phase 0 → 4 | 全驱动层，零运行时解析 |
+| VFS 设备模型 + 状态机 | Phase 0 → 9 | board_device.c, VFS.h |
+| Fast-Path GPIO 内联 | 4 | st7789, safety shutdown |
+| 驱动私有递归锁 | 4 → 5 | st7789, 全驱动原子事务 |
+| BSS 静态池 (零堆分配) | 2 → 10 | 全驱动 priv/line_buf/fifo |
+| Observer 安全停机 | 6 → 7 | board_driver.c, safe_state |
+| EPROBE_DEFER | 7 → 12 | 框架+4驱动，3轮重试 |
+| Config Store C 重写 + A/B Slot | 13 | board/config_store |
+| production_log 黑匣子 | 13 | core/production_log |
+| LVGL 双隔离队列 | 14 | lvgl_cmd, lvgl_main |
+| MP3 异步双缓冲 | 14 → 23 | media/mp3, StreamBuffer+Feeder |
+| EventBus 工业级 (ISR/锁/优雅停机) | 15 → 17 → 21 | event_bus |
+| RTC 硬件看门狗 | 19 | system_wdt, RTC_WDT 8s |
+| 双重反码 + volatile | 19 → 20 | critical_data.h |
+| Flash CRC 后台巡检 | 19 → 20 | system_scrubber, 32B chunk |
+| I2C/SPI periph_module_reset | 21 | i2c.c, spi.c (消除 Bootloop) |
+| Meyers 预触 (SIOF) | 21 → 25 | main.cpp, 9个getInstance |
+| DMA Cache 64B 对齐 | 21 → 25 | st7789, lvgl, mp3 |
+| FIFO acquire/release 原子协议 | 17 | Cricle_FIFO_buffer.c |
+| FIFO 伪共享 padding | 24 | m_buffer.h |
+
+### 安全防御层次
+
+| 层级 | 触发路径 | 硬件行为 |
+|------|----------|----------|
+| **L1** — OSAL_PANIC | `osal.h` → `system_safety_hardware_shutdown` | 关中断 + GPIO 安全电平 + PWM 急停 + LED 常亮 + CPU halt |
+| **L2** — EventBus 死锁 | dispatch 锁超时 → `enter_safe_state` | LED 闪烁 + 蜂鸣器 2Hz + 调度器冻结 |
+| **L3** — 服务 init 失败 | 6 场景 → `enter_safe_state` | DMA 硬件复位 (I2S/SPI) + LEDC 蜂鸣器 + vTaskSuspendAll |
+| **L4** — Bootloop 防护 | 5 次 panic → 物理锁死 | RTC_DATA_ATTR 计数器, 不写 Flash |
+| **L5** — RTC WDT | CPU/总线卡死 → 物理电源复位 | 独立 32kHz 时钟, 不受 APB 影响 |
+| **L6** — Flash 位腐烂 | CRC 失配 → Safe State | 32B chunk 后台巡检, 7.2h 全扫 |
+| **L7** — NMI 陷阱 | BOD 中断 → RTC STAMP + GPIO LED | `IRAM_ATTR` 纯寄存器操作, 无 FreeRTOS 依赖 |
+
+### 按类型检索
+
+| 类别 | 涉及轮次 | 关键文件 |
+|------|----------|----------|
+| **并发/竞态** | 3, 6, 8, 9, 15, 17, 22, 24 | gpio_key, board_device, event_bus, FIFO, mqtt, adc |
+| **内存/对齐** | 2, 6, 10, 16, 21, 23, 24, 25 | st7789, lvgl, mp3, render_engine, critical_data |
+| **安全/Fail-Safe** | 4, 5, 6, 7, 8, 9, 17, 18, 19, 20, 24 | board_driver, safe_state, hal_force_stop |
+| **MISRA/规范** | 6, 7, 9, 10, 11, 12 | 全驱动 gpio/adc/i2c, board_device |
+| **架构/隔离** | 4, 11, 12, 13, 14 | board_config, osal, hal_pin_t, config_store |
+
+---
+
+## 📊 二十五轮重构全貌统计
+
+| 轮次 | 修复数 | 涉及文件 | 主题 |
+|------|--------|----------|------|
+| Phase 0 (审计) | 14 项原始罪状 | — | 致命/严重/架构违规 |
+| 第一轮 | 9 项 | 3 文件 | 基础缺陷 (RST/DC/RGB565/WDT) |
+| 第二轮 | 3 项 | 1 文件 | 生命周期 + Cache-line 对齐 |
+| 第三轮 | 1 项重构 | 1 文件 | GPIO 按键 ISR + SPSC FIFO |
+| 第四轮 | 5 模块 | 12 文件 | IEC 61508/62304 架构基座 |
+| 第五轮 | 7 处超时 | 2 文件 | 500ms 锁超时 + VFS_ERR_TIMEOUT |
+| 第六轮 | 8 项 | 15 文件 | ioctl arg_len + O(N)→O(1) + 错误码 + phandle |
+| 第七轮 | 5 项 | 4 文件 | 逐函数审查: safe_state + EPROBE_DEFER |
+| 第八轮 | 5 项 | 3 文件 | 并发护城河: TOCTOU + 对齐 + 魔术头 |
+| 第九轮 | 6 项 | 4+2 新建 | 多核终局: SMP 逃逸 + FSM + MISRA UB |
+| 第十轮 | 5 大类 | 16+1 自动生成 | 硬件安全: DTC 池 + I2C 死锁 + Fail-Fast |
+| 第十一轮 | 3 项 | 17+1 新建 | 跨架构移植: CMSIS 墙 + board_config + hal_pin_t |
+| 第十二轮 | 4 项 | 6 文件 | 容错: I2C 物理短路 + MISRA 10.3 |
+| 第十三轮 | 3 项 | 9+4 新建+3 删除 | 生产地基: force_link 自动 + config_store + prod_log |
+| 第十四轮 | 4 项 | 14+2 新建 | 应用层终局: LVGL 队列 + on_destroy + MP3 异步 + MQTT |
+| 第十五轮 | 4 项 | 2 文件 | EventBus: ISR 自适应 + subscribe 锁 + KillBus |
+| 第十六轮 | 4 项 | 4 文件 | 内存安全: ConfigStore 精确匹配 + 原子计数器 |
+| 第十七轮 | 3 枚核弹 | 5+2 新建 | 并发物理: SMP 屏障 + WAIT_FOREVER 清零 + Safe State |
+| 第十八轮 | 2 修复+2 审计 | 7+1 新建 | 硬件物理层: DMA 爆音 + 栈水位监控 |
+| 第十九轮 | 3 项硬件防御 | 7+4 新建 | 宇宙规律: RTC_WDT + 双重反码 + Flash CRC |
+| 第二十轮 | 4 陷阱 | 5 文件 | 编译器潜规则: volatile + Cache 震荡 + OTA 变砖 + NMI |
+| 第二十一轮 | 3 修复+1 审计 | 6 文件 | C++ 编译器: SIOF + DMA 对齐 + 外设残留 |
+| 第二十二轮 | 2 修复+2 审计 | 4 文件 | 微架构: RMW 踩踏 + Socket 原子 + UART 非阻塞 |
+| 第二十三轮 | 2 修复+2 审计 | 3 文件 | DSP 物理: PSRAM 断流 + TLS 40KB + 亚正常数 |
+| 第二十四轮 | 4 项 | 6 文件 | SMP 微指令: 伪共享 + FPU + Bootloop + TCP 零窗 |
+| 第二十五轮 | 3 项 | 6 文件 | ABI 量子: __cxa_guard + ISR 内核 + Cache 64B |
+| **总计** | **107+ 项** | **85+ 文件** | **22 项重构** |
 
 ## 第十三轮: 生产环境地基加固 — 3 项架构升级
 
