@@ -1,6 +1,9 @@
 idf_component_register(
     SRCS
         "src/event_bus.cpp"
+        "src/production_log.c"
     INCLUDE_DIRS
         "include"
+    PRIV_REQUIRES
+        nvs_flash
 )

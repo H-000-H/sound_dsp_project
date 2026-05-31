@@ -2,6 +2,7 @@
 #define VFS_GPIO_H
 
 #include <stdint.h>
+#include "hal_gpio.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,17 @@ typedef struct {
 } gpio_level_arg_t;
 
 #endif /* ndef HAL_GPIO_H — type section */
+
+/* ── 快速路径：直通 HAL 绕过 VFS ioctl 派发，供高频调用场景 ── */
+static inline int vfs_gpio_set_level(int pin, int level)
+{
+    return hal_gpio_set_level(pin, level);
+}
+
+static inline int vfs_gpio_get_level(int pin)
+{
+    return hal_gpio_get_level(pin);
+}
 
 #ifdef __cplusplus
 }

@@ -32,3 +32,8 @@ void EventBus::post(SystemEvent id, uintptr_t arg)
         }
     }
 }
+
+extern "C" void event_bus_signal_device_removed(void* dev)
+{
+    EventBus::getInstance().post(SystemEvent::DeviceRemoved, (uintptr_t)dev);
+}

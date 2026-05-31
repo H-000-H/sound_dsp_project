@@ -4,6 +4,7 @@
 #include "osal.h"
 #include "VFS.h"
 #include <string.h>
+#include "board_config.h"
 
 static const char* kTag = "hal_uart";
 
@@ -15,12 +16,12 @@ static int uart_ret_to_vfs(int ret)
 
 typedef struct {
     uart_port_t port;
+    int pool_idx;
 } hal_uart_impl_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
-#define UART_IMPL_POOL_SIZE 3
-static hal_uart_impl_t s_uart_pool[UART_IMPL_POOL_SIZE];
-static uint8_t s_uart_used[UART_IMPL_POOL_SIZE];
+static hal_uart_impl_t s_uart_pool[UART_COUNT];
+static uint8_t s_uart_used[UART_COUNT];
 
 static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
 {
@@ -28,13 +29,14 @@ static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
         return -1;
     }
 
-    int impl_idx = osal_pool_claim(s_uart_used, UART_IMPL_POOL_SIZE);
+    int impl_idx = osal_pool_claim(s_uart_used, UART_COUNT);
     if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
     hal_uart_impl_t* impl = &s_uart_pool[impl_idx];
     memset(impl, 0, sizeof(*impl));
+    impl->pool_idx = impl_idx;
 
     int ret = 0;
     impl->port = UART_NUM_1;
@@ -79,7 +81,7 @@ static int uart_init_impl(hal_uart_t* uart, const hal_uart_config_t* cfg)
     return 0;
 
 err_pool:
-    osal_pool_release(s_uart_used, UART_IMPL_POOL_SIZE, impl_idx);
+    osal_pool_release(s_uart_used, UART_COUNT, impl_idx);
     return ret;
 }
 
@@ -111,7 +113,7 @@ static int uart_deinit_impl(hal_uart_t* uart)
 
     hal_uart_impl_t* impl = (hal_uart_impl_t*)uart->_impl;
     uart_driver_delete(impl->port);
-    for (int i = 0; i < UART_IMPL_POOL_SIZE; i++) { if (&s_uart_pool[i] == impl) { osal_pool_release(s_uart_used, UART_IMPL_POOL_SIZE, i); break; } }
+    osal_pool_release(s_uart_used, UART_COUNT, impl->pool_idx);
     uart->_impl = NULL;
     return 0;
 }
@@ -131,11 +133,11 @@ void hal_uart_init_struct(hal_uart_t* uart)
 typedef struct {
     hal_uart_t uart;
     hal_uart_config_t cfg;
+    int pool_idx;
 } uart_priv_t;
 
-#define UART_PRIV_POOL_SIZE 2
-static uart_priv_t s_uart_priv_pool[UART_PRIV_POOL_SIZE];
-static uint8_t s_uart_priv_used[UART_PRIV_POOL_SIZE];
+static uart_priv_t s_uart_priv_pool[UART_COUNT];
+static uint8_t s_uart_priv_used[UART_COUNT];
 
 static int uart_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
@@ -145,30 +147,29 @@ static int uart_fops_write(device_t* dev, const void* buffer, size_t len, uint32
     return priv->uart.write(&priv->uart, (const uint8_t*)buffer, len);
 }
 
-static int uart_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int uart_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    (void)arg_len;
+    (void)timeout_ms;
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
     case UART_CMD_READ: {
-        if (!arg) return -1;
+        if (arg_len != sizeof(uart_read_arg_t) || !arg) return VFS_ERR_INVAL;
         uart_read_arg_t* a = (uart_read_arg_t*)arg;
         return priv->uart.read(&priv->uart, a->data, a->len, a->timeout_ms);
     }
     case UART_CMD_DEINIT: {
         int ret = priv->uart.deinit(&priv->uart);
-        for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) { if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; } }
+        for (int i = 0; i < UART_COUNT; i++) { if (&s_uart_priv_pool[i] == priv) { s_uart_priv_used[i] = 0; break; } }
         device_set_priv(dev, NULL);
         device_set_status(dev, DEVICE_STATUS_SUSPENDED);
         return ret;
     }
     case UART_CMD_SET_BAUD: {
-        if (!arg) return -1;
+        if (arg_len != sizeof(int) || !arg) return VFS_ERR_INVAL;
         priv->uart.deinit(&priv->uart);
         priv->cfg.baud_rate = *(int*)arg;
         int ret = priv->uart.init(&priv->uart, &priv->cfg);
-        /* 重新 init 如果失败不释放池槽位 — priv 仍有效 */
         return ret;
     }
     default:
@@ -191,10 +192,11 @@ static int uart_probe(device_t* dev)
     device_get_prop_int(dev, "stop_bits", &stop_bits);
     device_get_prop_int(dev, "parity", &parity);
 
-    int pool_idx = osal_pool_claim(s_uart_priv_used, UART_PRIV_POOL_SIZE);
+    int pool_idx = osal_pool_claim(s_uart_priv_used, UART_COUNT);
     if (pool_idx < 0) return VFS_ERR_NOMEM;
     uart_priv_t* priv = &s_uart_priv_pool[pool_idx];
     memset(priv, 0, sizeof(*priv));
+    priv->pool_idx = pool_idx;
 
     priv->cfg.tx_pin = tx; priv->cfg.rx_pin = rx;
     priv->cfg.rts_pin = -1; priv->cfg.cts_pin = -1;
@@ -215,7 +217,7 @@ static int uart_probe(device_t* dev)
     return 0;
 
 err_pool:
-    osal_pool_release(s_uart_priv_used, UART_PRIV_POOL_SIZE, pool_idx);
+    osal_pool_release(s_uart_priv_used, UART_COUNT, pool_idx);
     return ret;
 }
 
@@ -224,10 +226,8 @@ static int uart_remove(device_t* dev)
     uart_priv_t* priv = (uart_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->uart.deinit(&priv->uart);
-        for (int i = 0; i < UART_PRIV_POOL_SIZE; i++) { if (&s_uart_priv_pool[i] == priv) { osal_pool_release(s_uart_priv_used, UART_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        osal_pool_release(s_uart_priv_used, UART_COUNT, priv->pool_idx);
+        device_ops_unregister(dev);
     }
     return 0;
 }
-
-DRIVER_REGISTER(uart, "esp32,uart", uart_probe, uart_remove);

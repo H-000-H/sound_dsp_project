@@ -6,18 +6,19 @@
 #include "osal.h"
 #include "VFS.h"
 #include <string.h>
+#include "board_config.h"
 
 static const char* TAG = "hal_adc";
 
 typedef struct {
     adc_oneshot_unit_handle_t handle;
     uint32_t configured_mask;
+    int pool_idx;
 } adc_priv_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
-#define ADC_PRIV_POOL_SIZE 2
-static adc_priv_t s_adc_pool[ADC_PRIV_POOL_SIZE];
-static uint8_t s_adc_used[ADC_PRIV_POOL_SIZE];
+static adc_priv_t s_adc_pool[ADC_COUNT];
+static uint8_t s_adc_used[ADC_COUNT];
 
 static adc_atten_t adc_atten_from_int(int atten)
 {
@@ -54,24 +55,23 @@ static int adc_config_channel_once(adc_priv_t* priv, int channel, int atten, int
     return 0;
 }
 
-static int adc_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int adc_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    (void)arg_len;
+    (void)timeout_ms;
     adc_priv_t* priv = (adc_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
 
     switch (cmd) {
     case ADC_CMD_READ_RAW: {
-        if (!arg) return -1;
+        if (arg_len != sizeof(adc_read_arg_t) || !arg) return VFS_ERR_INVAL;
         adc_read_arg_t* a = (adc_read_arg_t*)arg;
-        if (!a->out_raw) return -1;
+        if (!a->out_raw) return VFS_ERR_INVAL;
         int ret = adc_config_channel_once(priv, a->channel, a->atten, a->bitwidth);
         if (ret != 0) return ret;
         esp_err_t err = adc_oneshot_read(priv->handle, a->channel, a->out_raw);
         return (err == ESP_OK) ? 0 : (err == ESP_ERR_NO_MEM) ? VFS_ERR_NOMEM : VFS_ERR_IO;
     }
     case ADC_CMD_STOP:
-        /* oneshot 模式无连续转换, 仅作为安全关闭信号 */
         return 0;
 
     default:
@@ -89,10 +89,11 @@ static int adc_probe(device_t* dev)
     device_get_prop_int(dev, "unit", &unit);
     device_get_prop_int(dev, "reg", &unit);
 
-    int pool_idx = osal_pool_claim(s_adc_used, ADC_PRIV_POOL_SIZE);
+    int pool_idx = osal_pool_claim(s_adc_used, ADC_COUNT);
     if (pool_idx < 0) return VFS_ERR_NOMEM;
     adc_priv_t* priv = &s_adc_pool[pool_idx];
     memset(priv, 0, sizeof(*priv));
+    priv->pool_idx = pool_idx;
 
     int ret = 0;
     adc_oneshot_unit_init_cfg_t unit_cfg = {
@@ -111,7 +112,7 @@ static int adc_probe(device_t* dev)
     return 0;
 
 err_pool:
-    osal_pool_release(s_adc_used, ADC_PRIV_POOL_SIZE, pool_idx);
+    osal_pool_release(s_adc_used, ADC_COUNT, pool_idx);
     return ret;
 }
 
@@ -120,10 +121,8 @@ static int adc_remove(device_t* dev)
     adc_priv_t* priv = (adc_priv_t*)device_get_priv(dev);
     if (priv) {
         adc_oneshot_del_unit(priv->handle);
-        for (int i = 0; i < ADC_PRIV_POOL_SIZE; i++) { if (&s_adc_pool[i] == priv) { osal_pool_release(s_adc_used, ADC_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        osal_pool_release(s_adc_used, ADC_COUNT, priv->pool_idx);
+        device_ops_unregister(dev);
     }
     return 0;
 }
-
-DRIVER_REGISTER(adc, "esp32,adc", adc_probe, adc_remove);

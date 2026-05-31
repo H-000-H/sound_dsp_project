@@ -4,6 +4,7 @@
 #include "osal.h"
 #include "VFS.h"
 #include <string.h>
+#include "board_config.h"
 
 static int gpio_pin_valid(int pin)
 {
@@ -19,7 +20,7 @@ static int gpio_ret_to_vfs(esp_err_t ret)
 int hal_gpio_init(const hal_gpio_config_t* cfg)
 {
     if (cfg == NULL || !gpio_pin_valid(cfg->pin)) {
-        return -1;
+        return VFS_ERR_INVAL;
     }
 
     gpio_config_t gpio_cfg =
@@ -40,21 +41,21 @@ int hal_gpio_init(const hal_gpio_config_t* cfg)
     return gpio_ret_to_vfs(ret);
 }
 
-int hal_gpio_set_level(int pin, int level)
+int hal_gpio_set_level(hal_pin_t pin, int level)
 {
-    if (!gpio_pin_valid(pin)) return -1;
+    if (!gpio_pin_valid((int)pin)) return VFS_ERR_INVAL;
     return gpio_ret_to_vfs(gpio_set_level((gpio_num_t)pin, level));
 }
 
-int hal_gpio_get_level(int pin)
+int hal_gpio_get_level(hal_pin_t pin)
 {
-    if (!gpio_pin_valid(pin)) return -1;
+    if (!gpio_pin_valid((int)pin)) return VFS_ERR_INVAL;
     return gpio_get_level((gpio_num_t)pin);
 }
 
 int hal_gpio_toggle(int pin)
 {
-    if (!gpio_pin_valid(pin)) return -1;
+    if (!gpio_pin_valid(pin)) return VFS_ERR_INVAL;
     int level = gpio_get_level((gpio_num_t)pin);
     return gpio_ret_to_vfs(gpio_set_level((gpio_num_t)pin, !level));
 }
@@ -66,13 +67,13 @@ int hal_gpio_install_isr(int isr_flags)
 
 int hal_gpio_add_isr(int pin, hal_gpio_isr_t handler, void* arg)
 {
-    if (!gpio_pin_valid(pin) || !handler) return -1;
+    if (!gpio_pin_valid(pin) || !handler) return VFS_ERR_INVAL;
     return gpio_ret_to_vfs(gpio_isr_handler_add((gpio_num_t)pin, handler, arg));
 }
 
 int hal_gpio_remove_isr(int pin)
 {
-    if (!gpio_pin_valid(pin)) return -1;
+    if (!gpio_pin_valid(pin)) return VFS_ERR_INVAL;
     return gpio_ret_to_vfs(gpio_isr_handler_remove((gpio_num_t)pin));
 }
 
@@ -80,50 +81,50 @@ int hal_gpio_remove_isr(int pin)
 
 typedef struct {
     int dummy;
+    int pool_idx;
 } gpio_ctrl_priv_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
-#define GPIO_CTRL_PRIV_POOL_SIZE 2
-static gpio_ctrl_priv_t s_gpio_ctrl_pool[GPIO_CTRL_PRIV_POOL_SIZE];
-static uint8_t s_gpio_ctrl_used[GPIO_CTRL_PRIV_POOL_SIZE];
+static gpio_ctrl_priv_t s_gpio_ctrl_pool[GPIO_COUNT];
+static uint8_t s_gpio_ctrl_used[GPIO_COUNT];
 
-static int gpio_ctrl_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int gpio_ctrl_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    (void)arg_len;
+    (void)timeout_ms;
     switch (cmd) {
     case GPIO_CMD_CONFIG:
-        if (!arg) return -1;
+        if (arg_len != sizeof(hal_gpio_config_t) || !arg) return VFS_ERR_INVAL;
         return hal_gpio_init((const hal_gpio_config_t*)arg);
     case GPIO_CMD_TOGGLE:
-        if (!arg) return -1;
+        if (arg_len != sizeof(int) || !arg) return VFS_ERR_INVAL;
         return hal_gpio_toggle(*(int*)arg);
     case GPIO_CMD_INSTALL_ISR:
-        if (!arg) return -1;
+        if (arg_len != sizeof(int) || !arg) return VFS_ERR_INVAL;
         return hal_gpio_install_isr(*(int*)arg);
     case GPIO_CMD_ADD_ISR:
-        if (!arg) return -1;
+        if (arg_len != sizeof(gpio_isr_arg_t) || !arg) return VFS_ERR_INVAL;
         {
             gpio_isr_arg_t* a = (gpio_isr_arg_t*)arg;
             return hal_gpio_add_isr(a->pin, a->handler, a->arg);
         }
     case GPIO_CMD_REMOVE_ISR:
-        if (!arg) return -1;
+        if (arg_len != sizeof(int) || !arg) return VFS_ERR_INVAL;
         return hal_gpio_remove_isr(*(int*)arg);
     case GPIO_CMD_SET_LEVEL:
-        if (!arg) return -1;
+        if (arg_len != sizeof(gpio_level_arg_t) || !arg) return VFS_ERR_INVAL;
         {
             gpio_level_arg_t* a = (gpio_level_arg_t*)arg;
             return hal_gpio_set_level(a->pin, a->level);
         }
     case GPIO_CMD_GET_LEVEL:
-        if (!arg) return -1;
+        if (arg_len != sizeof(gpio_level_arg_t) || !arg) return VFS_ERR_INVAL;
         {
             gpio_level_arg_t* a = (gpio_level_arg_t*)arg;
             a->level = hal_gpio_get_level(a->pin);
-            return a->level < 0 ? -1 : 0;
+            return a->level < 0 ? VFS_ERR_IO : VFS_OK;
         }
     default:
-        return -1;
+        return VFS_ERR_INVAL;
     }
 }
 
@@ -133,11 +134,12 @@ static const file_operation_t gpio_ctrl_fops = {
 
 static int gpio_ctrl_probe(device_t* dev)
 {
-    int pool_idx = osal_pool_claim(s_gpio_ctrl_used, GPIO_CTRL_PRIV_POOL_SIZE);
+    int pool_idx = osal_pool_claim(s_gpio_ctrl_used, GPIO_COUNT);
     if (pool_idx < 0) return VFS_ERR_NOMEM;
 
     gpio_ctrl_priv_t* priv = &s_gpio_ctrl_pool[pool_idx];
     memset(priv, 0, sizeof(*priv));
+    priv->pool_idx = pool_idx;
     if (!priv) return VFS_ERR_NOMEM;
     device_set_priv(dev, priv);
     dev->ops = &gpio_ctrl_fops;
@@ -148,10 +150,8 @@ static int gpio_ctrl_remove(device_t* dev)
 {
     gpio_ctrl_priv_t* priv = (gpio_ctrl_priv_t*)device_get_priv(dev);
     if (priv) {
-        for (int i = 0; i < GPIO_CTRL_PRIV_POOL_SIZE; i++) { if (&s_gpio_ctrl_pool[i] == priv) { osal_pool_release(s_gpio_ctrl_used, GPIO_CTRL_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        osal_pool_release(s_gpio_ctrl_used, GPIO_COUNT, priv->pool_idx);
+        device_ops_unregister(dev);
     }
     return 0;
 }
-
-DRIVER_REGISTER(gpio, "esp32,gpio", gpio_ctrl_probe, gpio_ctrl_remove);

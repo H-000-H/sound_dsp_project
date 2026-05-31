@@ -4,6 +4,7 @@
 #include "osal.h"
 #include "VFS.h"
 #include <string.h>
+#include "board_config.h"
 
 static const char* kTag = "hal_i2s_bus";
 
@@ -12,12 +13,12 @@ typedef struct {
     i2s_chan_handle_t rx_handle;
     int sample_rate;
     int bits_per_sample;
+    int pool_idx;
 } hal_i2s_impl_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
-#define I2S_IMPL_POOL_SIZE 2
-static hal_i2s_impl_t s_i2s_pool[I2S_IMPL_POOL_SIZE];
-static uint8_t s_i2s_used[I2S_IMPL_POOL_SIZE];
+static hal_i2s_impl_t s_i2s_pool[I2S_COUNT];
+static uint8_t s_i2s_used[I2S_COUNT];
 
 static void i2s_release_impl(hal_i2s_impl_t* impl)
 {
@@ -40,13 +41,14 @@ static int i2s_init_impl(hal_i2s_bus_t* bus, const hal_i2s_config_t* cfg)
         return -1;
     }
 
-    int impl_idx = osal_pool_claim(s_i2s_used, I2S_IMPL_POOL_SIZE);
+    int impl_idx = osal_pool_claim(s_i2s_used, I2S_COUNT);
     if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
     hal_i2s_impl_t* impl = &s_i2s_pool[impl_idx];
     memset(impl, 0, sizeof(*impl));
+    impl->pool_idx = impl_idx;
 
     int ret = 0;
     impl->sample_rate = cfg->sample_rate;
@@ -137,7 +139,7 @@ static int i2s_init_impl(hal_i2s_bus_t* bus, const hal_i2s_config_t* cfg)
 err_chan:
     i2s_release_impl(impl);
 err_pool:
-    osal_pool_release(s_i2s_used, I2S_IMPL_POOL_SIZE, impl_idx);
+    osal_pool_release(s_i2s_used, I2S_COUNT, impl_idx);
     return ret;
 }
 
@@ -168,7 +170,7 @@ static int i2s_deinit_impl(hal_i2s_bus_t* bus)
 
     hal_i2s_impl_t* impl = (hal_i2s_impl_t*)bus->_impl;
     i2s_release_impl(impl);
-    for (int i = 0; i < I2S_IMPL_POOL_SIZE; i++) { if (&s_i2s_pool[i] == impl) { osal_pool_release(s_i2s_used, I2S_IMPL_POOL_SIZE, i); break; } }
+    osal_pool_release(s_i2s_used, I2S_COUNT, impl->pool_idx);
     bus->_impl = NULL;
     return 0;
 }
@@ -186,11 +188,11 @@ void hal_i2s_bus_init_struct(hal_i2s_bus_t* bus)
 
 typedef struct {
     hal_i2s_bus_t bus;
+    int pool_idx;
 } i2s_bus_priv_t;
 
-#define I2S_BUS_PRIV_POOL_SIZE 2
-static i2s_bus_priv_t s_i2s_bus_priv_pool[I2S_BUS_PRIV_POOL_SIZE];
-static uint8_t s_i2s_bus_priv_used[I2S_BUS_PRIV_POOL_SIZE];
+static i2s_bus_priv_t s_i2s_bus_priv_pool[I2S_COUNT];
+static uint8_t s_i2s_bus_priv_used[I2S_COUNT];
 
 static int i2s_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
@@ -199,14 +201,14 @@ static int i2s_fops_write(device_t* dev, const void* buffer, size_t len, uint32_
     return priv->bus.write(&priv->bus, (const int16_t*)buffer, len, NULL, timeout_ms);
 }
 
-static int i2s_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int i2s_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    (void)arg_len;
+    (void)timeout_ms;
     i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
     case I2S_CMD_WRITE: {
-        if (!arg) return -1;
+        if (arg_len != sizeof(i2s_write_arg_t) || !arg) return VFS_ERR_INVAL;
         i2s_write_arg_t* a = (i2s_write_arg_t*)arg;
         return priv->bus.write(&priv->bus, a->samples, a->bytes, a->written, a->timeout_ms);
     }
@@ -236,10 +238,11 @@ static int i2s_probe(device_t* dev)
         return -1;
     }
 
-    int pool_idx = osal_pool_claim(s_i2s_bus_priv_used, I2S_BUS_PRIV_POOL_SIZE);
+    int pool_idx = osal_pool_claim(s_i2s_bus_priv_used, I2S_COUNT);
     if (pool_idx < 0) return VFS_ERR_NOMEM;
     i2s_bus_priv_t* priv = &s_i2s_bus_priv_pool[pool_idx];
     memset(priv, 0, sizeof(*priv));
+    priv->pool_idx = pool_idx;
 
     hal_i2s_config_t cfg = {
         .ws_pin = ws, .bclk_pin = bclk, .dout_pin = dout, .din_pin = din,
@@ -259,7 +262,7 @@ static int i2s_probe(device_t* dev)
     return 0;
 
 err_pool:
-    osal_pool_release(s_i2s_bus_priv_used, I2S_BUS_PRIV_POOL_SIZE, pool_idx);
+    osal_pool_release(s_i2s_bus_priv_used, I2S_COUNT, pool_idx);
     return ret;
 }
 
@@ -268,10 +271,8 @@ static int i2s_remove(device_t* dev)
     i2s_bus_priv_t* priv = (i2s_bus_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->bus.deinit(&priv->bus);
-        for (int i = 0; i < I2S_BUS_PRIV_POOL_SIZE; i++) { if (&s_i2s_bus_priv_pool[i] == priv) { osal_pool_release(s_i2s_bus_priv_used, I2S_BUS_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        osal_pool_release(s_i2s_bus_priv_used, I2S_COUNT, priv->pool_idx);
+        device_ops_unregister(dev);
     }
     return 0;
 }
-
-DRIVER_REGISTER(i2s, "esp32,i2s-bus", i2s_probe, i2s_remove);

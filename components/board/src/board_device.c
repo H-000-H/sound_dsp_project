@@ -4,18 +4,22 @@
 
 #include "board_devtable.h"
 
-#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+extern void event_bus_signal_device_removed(void* dev);
 
 /* ── 运行时设备实例表 ── */
 static device_t s_devices[DEV_ID_COUNT];
-static uint8_t s_device_lock_storage[DEV_ID_COUNT][OSAL_MUTEX_STORAGE_SIZE];
+static uint8_t s_device_lock_storage[DEV_ID_COUNT][OSAL_MUTEX_STORAGE_SIZE] __attribute__((aligned(4)));
 
 /* ── board 层静态数据缓冲区 (platform_data 注入) ── */
 static uint8_t s_ws2812_rgb_buf[3];
 
 /* ── device_set_status FSM 原子锁 (IEC 61508 2.7.1) ── */
-static osal_spinlock_t s_status_lock;
+static uint8_t s_status_lock_storage[OSAL_SPINLOCK_STORAGE_SIZE] __attribute__((aligned(4)));
+static osal_spinlock_t* const s_status_lock = (osal_spinlock_t*)s_status_lock_storage;
 
 static void board_inject_platform_data(void)
 {
@@ -43,7 +47,8 @@ static int device_status_can_transit(device_status_t from, device_status_t to)
                to == DEVICE_STATUS_READY || to == DEVICE_STATUS_REMOVED || to == DEVICE_STATUS_ERROR;
     case DEVICE_STATUS_RUNNING:
         return to == DEVICE_STATUS_SUSPENDED || to == DEVICE_STATUS_READY ||
-               to == DEVICE_STATUS_REMOVED || to == DEVICE_STATUS_ERROR;
+               to == DEVICE_STATUS_REMOVED  || to == DEVICE_STATUS_ERROR ||
+               to == DEVICE_STATUS_PROBED;
     case DEVICE_STATUS_SUSPENDED:
         return to == DEVICE_STATUS_RUNNING || to == DEVICE_STATUS_READY ||
                to == DEVICE_STATUS_REMOVED || to == DEVICE_STATUS_ERROR;
@@ -60,11 +65,12 @@ int device_tree_init(void)
 {
     for (int i = 0; i < DEV_ID_COUNT; i++) {
         const device_node_t* node = board_node_get((device_id_t)i);
-        s_devices[i].node      = node;
-        s_devices[i].status    = node ? node->status : DEVICE_STATUS_DISABLED;
-        s_devices[i].priv_data = NULL;
-        s_devices[i].ops       = NULL;
-        s_devices[i].lock      = NULL;
+        s_devices[i].node        = node;
+        s_devices[i].status      = node ? node->status : DEVICE_STATUS_DISABLED;
+        s_devices[i].priv_data   = NULL;
+        s_devices[i].subsys_priv = NULL;
+        s_devices[i].ops         = NULL;
+        s_devices[i].lock        = NULL;
         s_devices[i].platform_data = NULL;
 
         if (node && s_devices[i].status != DEVICE_STATUS_DISABLED) {
@@ -76,7 +82,7 @@ int device_tree_init(void)
             }
         }
     }
-    osal_spinlock_init(&s_status_lock);
+    osal_spinlock_init(s_status_lock);
     board_inject_platform_data();
     return board_dev_count() > 0 ? 0 : -1;
 }
@@ -144,36 +150,73 @@ device_t* device_get_parent(const device_t* dev)
     return board_dev_get(node->deps[0]);
 }
 
+/* ── safe_parse_int32: MISRA C 2012 Rule 21.6 合规替代 strtol ──
+ * 无 errno 依赖, 线程安全, 支持 dec/hex/oct 前缀.
+ * 返回 0 成功, -1 非法字符或溢出.
+ */
+static int safe_parse_int32(const char* str, int* out)
+{
+    if (!str || !*str || !out) return -1;
+
+    int sign = 1;
+    const char* p = str;
+    if (*p == '-') { sign = -1; p++; }
+    else if (*p == '+') { p++; }
+
+    int base = 10;
+    if (*p == '0') {
+        p++;
+        if (*p == 'x' || *p == 'X') { base = 16; p++; }
+        else if (*p != '\0') { base = 8; }
+    }
+
+    if (!*p) return -1;
+
+    uint32_t val = 0;
+    const uint32_t limit = (sign > 0) ? (uint32_t)INT32_MAX : (uint32_t)INT32_MAX + 1UL;
+
+    while (*p) {
+        uint32_t digit;
+        if (*p >= '0' && *p <= '9')      digit = (uint32_t)(*p - '0');
+        else if (*p >= 'a' && *p <= 'f') digit = (uint32_t)(*p - 'a' + 10);
+        else if (*p >= 'A' && *p <= 'F') digit = (uint32_t)(*p - 'A' + 10);
+        else return -1;
+
+        if (digit >= (uint32_t)base) return -1;
+
+        if (val > (limit - digit) / (uint32_t)base) return -1;
+        val = val * (uint32_t)base + digit;
+        p++;
+    }
+
+    *out = (sign > 0) ? (int)val : -(int)val;
+    return 0;
+}
+
 /* ── 属性读取（通过 dev->node） ── */
 int device_get_prop_int(const device_t* dev, const char* key, int* val)
 {
-    if (!dev || !dev->node || !key || !val) return -1;
+    if (!dev || !dev->node || !key || !val) return VFS_ERR_INVAL;
     const device_node_t* node = dev->node;
     for (int i = 0; i < node->prop_count; i++) {
         if (strcmp(node->props[i].key, key) == 0)
-        {
-            char* end = NULL;
-            long parsed = strtol(node->props[i].value, &end, 0);
-            if (!end || *end != '\0') return -1;
-            if (parsed < INT32_MIN || parsed > INT32_MAX) return -1;
-            *val = (int)parsed;
-            return 0;
-        }
+            return safe_parse_int32(node->props[i].value, val);
     }
-    return -1;
+    return VFS_ERR_INVAL;
 }
 
 int device_get_prop_str(const device_t* dev, const char* key, const char** val)
 {
-    if (!dev || !dev->node || !key || !val) return -1;
+    if (!dev || !dev->node || !key || !val) return VFS_ERR_INVAL;
     const device_node_t* node = dev->node;
     for (int i = 0; i < node->prop_count; i++) {
-        if (strcmp(node->props[i].key, key) == 0) {
+        if (strcmp(node->props[i].key, key) == 0)
+        {
             *val = node->props[i].value;
             return 0;
         }
     }
-    return -1;
+    return VFS_ERR_INVAL;
 }
 
 int device_get_prop_bool(const device_t* dev, const char* key, int* val)
@@ -205,13 +248,13 @@ device_criticality_t device_get_criticality(const device_t* dev)
 int device_set_status(device_t* dev, device_status_t status)
 {
     if (!dev) return -1;
-    osal_spinlock_lock(&s_status_lock);
+    osal_spinlock_lock(s_status_lock);
     if (!device_status_can_transit(dev->status, status)) {
-        osal_spinlock_unlock(&s_status_lock);
+        osal_spinlock_unlock(s_status_lock);
         return -1;
     }
     dev->status = status;
-    osal_spinlock_unlock(&s_status_lock);
+    osal_spinlock_unlock(s_status_lock);
     return 0;
 }
 
@@ -225,6 +268,18 @@ int device_set_priv(device_t* dev, void* priv)
 void* device_get_priv(const device_t* dev)
 {
     return dev ? dev->priv_data : NULL;
+}
+
+int device_set_subsys_priv(device_t* dev, void* subsys_priv)
+{
+    if (!dev) return -1;
+    dev->subsys_priv = subsys_priv;
+    return 0;
+}
+
+void* device_get_subsys_priv(const device_t* dev)
+{
+    return dev ? dev->subsys_priv : NULL;
 }
 
 /* ── 设备遍历 ── */
@@ -253,46 +308,34 @@ int device_get_count(void)
     return board_dev_count();
 }
 
-/* ── VFS 便捷包装 ── */
-static int device_can_access(const device_t* dev)
-{
-    if (!dev || !dev->ops) return -1;
-    /* IEC 62304 Class C: 仅 RUNNING 态允许 I/O (禁用 PROBED 态幽灵访问) */
-    if (dev->status == DEVICE_STATUS_RUNNING) return 0;
-    return -1;
-}
-
-/* ── 内部锁辅助: 自动抓锁 + 访问校验, 返回 0 可继续, 否则已解锁 ── */
-static int device_lock_and_check(device_t* dev)
-{
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
-    if (device_can_access(dev) != 0) {
-        device_unlock(dev);
-        return -1;
-    }
-    return 0;
-}
-
+/* ── VFS 转发层 ──
+ * IEC 61508 §7.4.3.1: 所有 VFS 入口在持锁状态下完成状态检查 + ops 调用.
+ *   device_open/close/suspend/resume + device_write/read/ioctl 全部
+ *   在 device_lock(dev) 保护下执行 check-then-act, 阻断多线程重入.
+ *
+ * 递归 mutex 保证嵌套调用安全:
+ *   - device_write(st7789) → write_cmd → device_write(spi) 持有不同锁, 安全
+ *   - 驱动内部对 dev 自身递归加锁, 递归 mutex 放行
+ *
+ * device_ops_unregister() 用于 remove 路径清理 priv_data + ops.
+ */
 int device_open(device_t* dev, void* arg)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
+    if (!dev) return VFS_ERR_INVAL;
 
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
     if (!dev->ops || (!dev->ops->open && !dev->ops->init)) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
     if (dev->status != DEVICE_STATUS_PROBED) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
 
-    ret = dev->ops->open ? dev->ops->open(dev, arg) : dev->ops->init(dev);
+    int ret = dev->ops->open ? dev->ops->open(dev, arg) : dev->ops->init(dev);
     if (ret == 0) {
-        device_set_status(dev, DEVICE_STATUS_RUNNING);
+        dev->status = DEVICE_STATUS_RUNNING;
     }
     device_unlock(dev);
     return ret;
@@ -300,78 +343,75 @@ int device_open(device_t* dev, void* arg)
 
 int device_close(device_t* dev)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
-
-    if (dev->status != DEVICE_STATUS_RUNNING) {
+    if (!dev) return VFS_ERR_INVAL;
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
+    if (!dev->ops || !dev->ops->close) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
-    if (dev->ops && dev->ops->close) {
-        ret = dev->ops->close(dev);
-        if (ret != 0) {
-            device_unlock(dev);
-            return ret;
-        }
+    if (dev->status != DEVICE_STATUS_RUNNING && dev->status != DEVICE_STATUS_SUSPENDED) {
+        device_unlock(dev);
+        return VFS_ERR_IO;
     }
-    device_set_status(dev, DEVICE_STATUS_PROBED);
+
+    int ret = dev->ops->close(dev);
+    if (ret == 0) {
+        dev->status = DEVICE_STATUS_PROBED;
+    }
     device_unlock(dev);
-    return 0;
+    return ret;
 }
 
 int device_write(device_t* dev, const void* buf, size_t len, uint32_t timeout_ms)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
-    if (device_can_access(dev) != 0 || !dev->ops->write) {
+    if (!dev) return VFS_ERR_INVAL;
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
+    if (!dev->ops || !dev->ops->write || dev->status != DEVICE_STATUS_RUNNING) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
-    ret = dev->ops->write(dev, buf, len, timeout_ms);
+    int ret = dev->ops->write(dev, buf, len, timeout_ms);
     device_unlock(dev);
     return ret;
 }
 
 int device_read(device_t* dev, void* buf, size_t len, uint32_t timeout_ms)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
-    if (device_can_access(dev) != 0 || !dev->ops->read) {
+    if (!dev) return VFS_ERR_INVAL;
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
+    if (!dev->ops || !dev->ops->read || dev->status != DEVICE_STATUS_RUNNING) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
-    ret = dev->ops->read(dev, buf, len, timeout_ms);
+    int ret = dev->ops->read(dev, buf, len, timeout_ms);
     device_unlock(dev);
     return ret;
 }
 
-int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
-    if (device_can_access(dev) != 0 || !dev->ops->ioctl) {
+    if (!dev) return VFS_ERR_INVAL;
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
+    if (!dev->ops || !dev->ops->ioctl || dev->status != DEVICE_STATUS_RUNNING) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
-    ret = dev->ops->ioctl(dev, cmd, arg, arg_len);
+    int ret = dev->ops->ioctl(dev, cmd, arg, arg_len, timeout_ms);
     device_unlock(dev);
     return ret;
 }
 
 int device_suspend(device_t* dev)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
+    if (!dev) return VFS_ERR_INVAL;
 
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
     if (dev->status != DEVICE_STATUS_RUNNING) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
+
+    int ret = 0;
     if (dev->ops && dev->ops->suspend) {
         ret = dev->ops->suspend(dev);
         if (ret != 0) {
@@ -379,21 +419,22 @@ int device_suspend(device_t* dev)
             return ret;
         }
     }
-    device_set_status(dev, DEVICE_STATUS_SUSPENDED);
+    dev->status = DEVICE_STATUS_SUSPENDED;
     device_unlock(dev);
     return 0;
 }
 
 int device_resume(device_t* dev)
 {
-    if (!dev) return -1;
-    int ret = device_lock(dev);
-    if (ret != 0) return ret;
+    if (!dev) return VFS_ERR_INVAL;
 
+    if (device_lock(dev) != 0) return VFS_ERR_BUSY;
     if (dev->status != DEVICE_STATUS_SUSPENDED) {
         device_unlock(dev);
-        return -1;
+        return VFS_ERR_IO;
     }
+
+    int ret = 0;
     if (dev->ops && dev->ops->resume) {
         ret = dev->ops->resume(dev);
         if (ret != 0) {
@@ -401,7 +442,7 @@ int device_resume(device_t* dev)
             return ret;
         }
     }
-    device_set_status(dev, DEVICE_STATUS_RUNNING);
+    dev->status = DEVICE_STATUS_RUNNING;
     device_unlock(dev);
     return 0;
 }
@@ -418,4 +459,36 @@ int device_unlock(device_t* dev)
 {
     if (!dev || !dev->lock) return -1;
     return osal_mutex_unlock(dev->lock) == 0 ? VFS_OK : VFS_ERR_IO;
+}
+
+/* ── 驱动卸载清理：状态锁定 → 广播 → 持锁斩断 ──
+ * IEC 61508 §7.4.3.1: 必须在持有 dev->lock 的前提下置空 ops,
+ * 阻断 TOCTOU 竞态 (Thread A 在 device_read 中已通过 status 检查,
+ * Thread B 同时卸载置空 ops → NULL 解引用 → HardFault).
+ *
+ * 1. 获取 dev->lock, 阻断所有正在进行的 VFS 操作
+ * 2. 标记 REMOVED, 阻断新 I/O 重入
+ * 3. 广播 DeviceRemoved 事件, 通知 UI/异步任务立即释引用
+ * 4. 持锁置空 priv_data 与 ops
+ * 5. 释放锁
+ */
+void device_ops_unregister(device_t* dev)
+{
+    if (!dev) return;
+
+    if (device_lock(dev) != 0) return;
+
+    dev->status = DEVICE_STATUS_REMOVED;
+
+    device_unlock(dev);
+
+    event_bus_signal_device_removed(dev);
+
+    if (device_lock(dev) != 0) return;
+
+    device_set_priv(dev, NULL);
+    dev->subsys_priv = NULL;
+    dev->ops = NULL;
+
+    device_unlock(dev);
 }

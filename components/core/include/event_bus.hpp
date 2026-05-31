@@ -13,6 +13,7 @@ enum class SystemEvent : uint32_t
     MusicPlay,
     MusicPause,
     MusicStop,
+    DeviceRemoved,
     Fault,
 };
 
@@ -48,3 +49,11 @@ private:
     Subscriber m_subscribers[kMaxSubscribers] = {};
     size_t m_count = 0;
 };
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void event_bus_signal_device_removed(void* dev);
+#ifdef __cplusplus
+}
+#endif

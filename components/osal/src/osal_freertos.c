@@ -1,4 +1,5 @@
 #include "osal.h"
+#include "board_config.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -6,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/portmacro.h"
+#include "esp_task_wdt.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -18,6 +20,16 @@ struct osal_mutex {
 /* 确认 OSAL_MUTEX_STORAGE_SIZE 足够容纳 */
 _Static_assert(sizeof(struct osal_mutex) <= OSAL_MUTEX_STORAGE_SIZE,
                "OSAL_MUTEX_STORAGE_SIZE too small");
+
+/* ── 上下文检测 (平台无关, 架构泄露防火墙)
+ * FreeRTOS 提供 xPortInIsrContext() 覆盖所有架构 (Xtensa / RISC-V / ARM).
+ * 框架层 (board_driver.c 等) 通过 osal_in_isr() 间接调用,
+ * 不直接依赖 CMSIS __get_IPSR() 或 Xtensa 专有指令.
+ */
+int osal_in_isr(void)
+{
+    return (int)xPortInIsrContext();
+}
 
 /* ── Spinlock: 关中断临界区, 适配 FreeRTOS portMUX_TYPE ── */
 struct osal_spinlock {
@@ -43,7 +55,7 @@ void osal_spinlock_unlock(osal_spinlock_t* lock)
 }
 
 /* ── 静态互斥锁池（禁止运行时动态分配） ── */
-#define OSAL_MUTEX_POOL_SIZE 24
+
 
 static struct osal_mutex s_mutex_pool[OSAL_MUTEX_POOL_SIZE];
 static uint8_t s_mutex_used[OSAL_MUTEX_POOL_SIZE];
@@ -173,6 +185,38 @@ int osal_task_create(const char* name, uint32_t stack_size,
     return (ret == pdPASS) ? 0 : -1;
 }
 
+/* ── 硬件安全关断 (weak, 板级必须覆写) ──
+ * 默认实现: 触发硬故障 — 严禁静默通过.
+ * 医疗/工业板级必须覆写此函数以执行:
+ *   1. 关所有 PWM 输出
+ *   2. 断开执行器/电机供电
+ *   3. 拉低关键 GPIO
+ *   4. 喂硬件看门狗, 等待系统复位
+ *
+ * 板级覆写后, 链接器自动选用强符号版本.
+ */
+__attribute__((weak)) void safety_hardware_shutdown(void)
+{
+    /*
+     * 默认: 触发非法指令异常 (HardFault).
+     * 板级若未覆写, PANIC 路径不会静默通过 — 系统必然停机.
+     * 开发期间立即暴露缺失实现; 生产期间由强符号版本接管.
+     */
+    __asm__ volatile("ill");
+}
+
+/* ── Panic 安全互锁 (weak, 板级可覆盖) ──
+ * 默认实现: 喂硬件看门狗让系统复位, 若 WDT 未启用则死循环.
+ * 医疗/工业板级应覆盖此函数: 关 PWM → 切断执行器供电 → 喂狗.
+ */
+__attribute__((weak)) void osal_panic_interlock(void)
+{
+#if CONFIG_ESP_TASK_WDT_EN
+    esp_task_wdt_add(NULL);
+    esp_task_wdt_reset();
+#endif
+}
+
 void osal_log(osal_log_level_t level, const char* tag, const char* fmt, ...)
 {
     esp_log_level_t esp_level = ESP_LOG_INFO;
@@ -188,4 +232,11 @@ void osal_log(osal_log_level_t level, const char* tag, const char* fmt, ...)
     va_start(args, fmt);
     esp_log_writev(esp_level, tag ? tag : "drv", fmt, args);
     va_end(args);
+}
+
+__attribute__((weak)) void production_log_push_fmt(prod_log_level_t level, const char* tag, const char* fmt, ...)
+{
+    (void)level;
+    (void)tag;
+    (void)fmt;
 }

@@ -31,7 +31,7 @@ static int eng_scan(input_engine_t* eng, input_state_t* out, int max)
     input_engine_impl_t* impl = (input_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
     gpio_key_scan_arg_t arg = { .out = (gpio_key_state_t*)out, .max_keys = max };
-    return device_ioctl(impl->dev, GPIO_KEY_CMD_SCAN, &arg, sizeof(arg));
+    return device_ioctl(impl->dev, GPIO_KEY_CMD_SCAN, &arg, sizeof(arg), 100);
 }
 
 static int eng_get_key_count(input_engine_t* eng)
@@ -39,7 +39,7 @@ static int eng_get_key_count(input_engine_t* eng)
     if (!eng || !eng->_impl) return -1;
     input_engine_impl_t* impl = (input_engine_impl_t*)eng->_impl;
     if (!impl->dev) return -1;
-    return device_ioctl(impl->dev, GPIO_KEY_CMD_GET_COUNT, NULL, 0);
+    return device_ioctl(impl->dev, GPIO_KEY_CMD_GET_COUNT, NULL, 0, 100);
 }
 
 static void eng_deinit(input_engine_t* eng)

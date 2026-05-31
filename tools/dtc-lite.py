@@ -928,6 +928,13 @@ class DTSCompiler:
         """验证: 所有设备的 compatible 在 driver_map 中都有对应"""
         PLATFORM = {
             'esp32,cpu',
+            'esp32,spi-bus',
+            'esp32,i2s-bus',
+            'esp32,uart',
+            'esp32,gpio',
+            'esp32,i2c-bus',
+            'esp32,rmt-tx',
+            'esp32,adc',
         }
         errors = []
         for dev in self.device_list:
@@ -1018,6 +1025,53 @@ class DTSCompiler:
 
         return result  # 按 probe 顺序排列的设备索引
 
+    def compute_cascade_tables(self):
+        """
+        计算故障传播表: 对于每个设备, 找出所有传递依赖它的设备.
+        返回 cascade_map = { dev_idx: [dependent_idx, ...] }
+        运行时 disable_dependents 用此表代替 BFS 收敛.
+        """
+        n = len(self.device_list)
+        # 构建前向依赖图: parent → child (parent 失败 → child 应被禁用)
+        label_to_idx = {}
+        for i, dev in enumerate(self.device_list):
+            if dev.label:
+                label_to_idx[dev.label] = i
+
+        graph = [[] for _ in range(n)]
+        for i, dev in enumerate(self.device_list):
+            deps = self.get_device_deps(dev)
+            dep_set = set()
+            for dep_label in deps:
+                if dep_label in label_to_idx:
+                    dep_set.add(label_to_idx[dep_label])
+            for di in dep_set:
+                graph[di].append(i)  # di → i: di is dependency, i is dependent
+
+        # 拓扑顺序 (用于下游排序)
+        order = self.topological_sort()
+        order_idx = {dev: pos for pos, dev in enumerate(order)}
+
+        # 对每个设备 DFS 求传递闭包
+        cascade = {}
+        for i in range(n):
+            visited = set()
+            stack = list(graph[i])  # 直接下游
+            while stack:
+                child = stack.pop()
+                if child in visited:
+                    continue
+                visited.add(child)
+                for grandchild in graph[child]:
+                    if grandchild not in visited:
+                        stack.append(grandchild)
+            # 按 probe 顺序排列
+            sorted_visited = sorted(visited, key=lambda x: order_idx.get(x, x))
+            if sorted_visited:
+                cascade[i] = sorted_visited
+
+        return cascade
+
 
 # =========================================================================
 #  C 代码生成器
@@ -1038,6 +1092,8 @@ class CGenerator:
         self._gen_board_devtable_c()
         self._gen_board_probe_c()
         self._gen_board_handles_h()
+        self._gen_dt_config_h()
+        self._gen_board_force_link_c()
 
     def _snake_name(self, name):
         """设备名 → 枚举/变量名 (sanitize)"""
@@ -1108,6 +1164,45 @@ class CGenerator:
             f.write('\n'.join(lines))
         print(f"  [gen] {path}")
 
+    def _gen_board_force_link_c(self):
+        """生成 board_force_link.c — 强制链接器保留所有 driver_map 中的 probe 函数
+        由 dtc-lite 扫描 DRIVER_REGISTER 宏自动生成, 消除手动维护.
+        """
+        path = os.path.join(self.output_dir, 'board_force_link.c')
+
+        driver_map = self.compiler.driver_map
+        if not driver_map:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('/* no drivers registered — nothing to force-link */\n')
+            print(f"  [gen] {path} (empty)")
+            return
+
+        externs = []
+        refs = []
+        for compat, (probe_fn, _) in sorted(driver_map.items()):
+            externs.append(f'extern int {probe_fn}(device_t*);')
+            refs.append(f'    s_fake_ref = (void*){probe_fn};')
+
+        lines = [
+            '#include "device.h"',
+            '',
+            '/* ===== 自动生成 — 由 dtc-lite.py 扫描 DRIVER_REGISTER 宏生成 ===== */',
+            '/* 每新增驱动, 重新构建即可自动更新此文件, 无需手动编辑.          */',
+            '',
+        ] + externs + [
+            '',
+            'static volatile void* s_fake_ref;',
+            '',
+            'static void __attribute__((constructor, used)) _force_probe_link(void)',
+            '{',
+        ] + refs + [
+            '}',
+        ]
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+        print(f"  [gen] {path}")
+
     def _gen_board_devtable_h(self):
         """生成 board_devtable.h — 设备表访问 API"""
         path = os.path.join(self.output_dir, 'board_devtable.h')
@@ -1142,6 +1237,9 @@ class CGenerator:
             'typedef int (*remove_fn_t)(device_t*);',
             'probe_fn_t board_probe_get_fn(device_id_t id);',
             'remove_fn_t board_remove_get_fn(device_id_t id);',
+            '',
+            '/* 故障传播表: id 失败时应一并禁用的设备列表 */',
+            'const device_id_t* board_cascade_get(device_id_t id, int* count);',
             '',
             '#ifdef __cplusplus',
             '}',
@@ -1327,6 +1425,19 @@ class CGenerator:
         order = self.compiler.topological_sort()
         path = os.path.join(self.output_dir, 'board_probe.c')
 
+        PLATFORM = {
+            'esp32,cpu',
+            'esp32,spi-bus',
+            'esp32,i2s-bus',
+            'esp32,uart',
+            'esp32,gpio',
+            'esp32,i2c-bus',
+            'esp32,rmt-tx',
+            'esp32,adc',
+        }
+
+        has_platform = False
+
         # 收集驱动 probe + remove 函数的外部声明
         probe_externs = []
         remove_externs = []
@@ -1347,6 +1458,12 @@ class CGenerator:
                     remove_array.append(
                         f'    [DEV_ID_{snake}] = {r_fn},'
                     )
+                elif compat in PLATFORM:
+                    has_platform = True
+                    probe_array.append(
+                        f'    [DEV_ID_{snake}] = board_platform_probe,'
+                    )
+                    remove_array.append(f'    [DEV_ID_{snake}] = NULL,')
                 else:
                     probe_array.append(f'    [DEV_ID_{snake}] = NULL,')
                     remove_array.append(f'    [DEV_ID_{snake}] = NULL,')
@@ -1369,7 +1486,19 @@ class CGenerator:
         ] + probe_externs + [
             '',
             '/* ===== remove 函数声明 ===== */',
-        ] + remove_externs + [
+        ] + remove_externs
+
+        if has_platform:
+            lines += [
+                '',
+                '/* ===== 平台基础设施透传 probe (PLATFORM devices) ===== */',
+                'static int board_platform_probe(device_t* dev) {',
+                '    (void)dev;',
+                '    return 0;',
+                '}',
+            ]
+
+        lines += [
             '',
             '/* ===== probe 函数表 (按 DEV_ID 索引) ===== */',
             f'static probe_fn_t s_probe_fns[DEV_ID_COUNT] = {{',
@@ -1406,7 +1535,63 @@ class CGenerator:
             '    return DEV_ID_COUNT;',
             '}',
             '',
+            '/* ===== 故障传播表 (编译期预计算, 替代运行时 BFS) ===== */',
         ]
+
+        # 编译期计算故障传播
+        cascade = self.compiler.compute_cascade_tables()
+        dev_count = len(devs)
+
+        # 扁平数据 + 计数 + 偏移
+        flat_data = []
+        counts = [0] * dev_count
+        for i in range(dev_count):
+            if i in cascade:
+                counts[i] = len(cascade[i])
+                flat_data.extend(cascade[i])
+            else:
+                counts[i] = 0
+
+        offsets = [0] * dev_count
+        cumulative = 0
+        for i in range(dev_count):
+            offsets[i] = cumulative
+            cumulative += counts[i]
+
+        if flat_data:
+            lines += [
+                f'static const device_id_t s_cascade_data[] = {{',
+            ]
+            for idx in order:
+                if idx in cascade:
+                    for dep_idx in cascade[idx]:
+                        dep_dev = devs[dep_idx]
+                        lines.append(f'    DEV_ID_{self._snake_name(dep_dev.name)},')
+            lines += [
+                '};',
+                '',
+                f'static const uint8_t s_cascade_counts[DEV_ID_COUNT] = {{',
+            ]
+            for i in range(dev_count):
+                lines.append(f'    [DEV_ID_{self._snake_name(devs[i].name)}] = {counts[i]},')
+            lines += [
+                '};',
+                '',
+                f'static const uint16_t s_cascade_offset[DEV_ID_COUNT] = {{',
+            ]
+            for i in range(dev_count):
+                lines.append(f'    [DEV_ID_{self._snake_name(devs[i].name)}] = {offsets[i]},')
+            lines += [
+                '};',
+                '',
+                'const device_id_t* board_cascade_get(device_id_t id, int* count) {',
+                '    if ((int)id < 0 || (int)id >= DEV_ID_COUNT) { *count = 0; return NULL; }',
+                '    *count = s_cascade_counts[id];',
+                '    return *count ? &s_cascade_data[s_cascade_offset[id]] : NULL;',
+                '}',
+            ]
+
+        lines += ['']
 
         with open(path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(lines))
@@ -1459,10 +1644,56 @@ class CGenerator:
             f.write('\n'.join(lines))
         print(f"  [gen] {path}")
 
+    def _gen_dt_config_h(self):
+        """生成 dt_config_gen.h — 从 DTS 设备计数自动生成 Pool Size 宏
+        IEC 61508 §7.4.2.4: 禁止拍脑袋硬编码资源上限.
+        所有静态池大小由编译期设备树唯一确定.
+        """
+        devs = self.compiler.device_list
+        path = os.path.join(self.output_dir, 'dt_config_gen.h')
+
+        compat_counts = {}
+        for dev in devs:
+            compat_prop = dev.get_prop('compatible')
+            if compat_prop and compat_prop.strings:
+                compat = compat_prop.strings[0]
+                compat_counts[compat] = compat_counts.get(compat, 0) + 1
+
+        def _compat_to_macro(compat):
+            return compat.replace(',', '_').replace('-', '_').replace('.', '_').upper()
+
+        lines = [
+            '#ifndef DT_CONFIG_GEN_H',
+            '#define DT_CONFIG_GEN_H',
+            '',
+            '/* Auto-generated by dtc-lite.py — DO NOT EDIT */',
+            '/*',
+            ' * Pool size macros derived from DTS device count per compatible.',
+            ' * Use these instead of hardcoded #define XXX_POOL_SIZE N.',
+            ' *',
+            ' * IEC 61508 §7.4.2.4: 静态资源分配必须由系统配置工具验证.',
+            ' */',
+            '',
+        ]
+
+        for compat in sorted(compat_counts.keys()):
+            macro = _compat_to_macro(compat)
+            lines.append(f'#define DTC_GEN_COUNT_{macro}  {compat_counts[compat]}')
+
+        lines += [
+            '',
+            '#endif /* DT_CONFIG_GEN_H */',
+            '',
+        ]
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+        print(f"  [gen] {path}")
+
 
 # =========================================================================
 #  Main
-# =========================================================================
+# =========================================================================""
 
 def main():
     if len(sys.argv) < 3:

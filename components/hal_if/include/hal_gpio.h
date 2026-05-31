@@ -7,6 +7,24 @@
 extern "C" {
 #endif
 
+/* ── 跨平台引脚抽象 (IEC 61508 §7.4.2.4: HAL 层不得泄露架构特性) ──
+ *
+ * hal_pin_t 为 32-bit 复合引脚标识:
+ *   [31:16] 端口 (Port)  — ESP32=0, STM32=GPIOA/GPIOB/...
+ *   [15: 0] 引脚号 (Pin) — 0~15
+ *
+ * 平台移植示例:
+ *   ESP32:  hal_pin_t pin = HAL_MAKE_PIN(0, GPIO_NUM_5);
+ *   STM32:  hal_pin_t pin = HAL_MAKE_PIN(GPIO_PORT_A, GPIO_PIN_5);
+ */
+typedef uint32_t hal_pin_t;
+
+#define HAL_PIN_PORT_SHIFT 16
+#define HAL_PIN_NUM_MASK   0xFFFFU
+#define HAL_MAKE_PIN(port, num)  (((hal_pin_t)(port) << HAL_PIN_PORT_SHIFT) | ((hal_pin_t)(num) & HAL_PIN_NUM_MASK))
+#define HAL_PIN_PORT(pin)        ((int)((pin) >> HAL_PIN_PORT_SHIFT))
+#define HAL_PIN_NUM(pin)         ((int)((pin) & HAL_PIN_NUM_MASK))
+
 typedef enum
 {
     HAL_GPIO_MODE_INPUT = 0,
@@ -30,7 +48,7 @@ typedef enum
 
 typedef struct
 {
-    int pin;
+    hal_pin_t pin;
     hal_gpio_mode_t mode;
     hal_gpio_pull_t pullup;
     hal_gpio_pull_t pulldown;
@@ -50,15 +68,19 @@ typedef void (*hal_gpio_isr_t)(void* arg);
 #define GPIO_CMD_GET_LEVEL    0x16
 
 typedef struct {
-    int pin;
+    hal_pin_t pin;
     hal_gpio_isr_t handler;
     void* arg;
 } gpio_isr_arg_t;
 
 typedef struct {
-    int pin;
+    hal_pin_t pin;
     int level;
 } gpio_level_arg_t;
+
+/* ── 快速路径函数声明（实现在 soc_port_esp32/src/gpio.c） ── */
+int hal_gpio_set_level(hal_pin_t pin, int level);
+int hal_gpio_get_level(hal_pin_t pin);
 
 #ifdef __cplusplus
 }

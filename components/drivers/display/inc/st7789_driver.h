@@ -1,45 +1,26 @@
 #ifndef ST7789_DRIVER_H
 #define ST7789_DRIVER_H
 
-#include <stdint.h>
-#include "device.h"
+#include "display.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#define ST7789_TIMEOUT_CMD_MS       1000
+#define ST7789_TIMEOUT_IOCTL_MS     100
+#define ST7789_TIMEOUT_POWEROFF_MS  500
+#define ST7789_TIMEOUT_SLEEP_MS     5
+#define ST7789_TIMEOUT_WAKE_MS      120
 
-/* ── 公开信息 ── */
-typedef struct {
-    int width;
-    int height;
-} st7789_info_t;
-
-/* ── ioctl 命令 ── */
-#define ST7789_CMD_GET_INFO      1  /* arg: st7789_info_t* */
-#define ST7789_CMD_FILL_RECT     2  /* arg: st7789_fill_rect_arg_t* */
-#define ST7789_CMD_FILL_SCREEN   3  /* arg: int* — color */
-#define ST7789_CMD_DRAW_BITMAP   4  /* arg: st7789_draw_bitmap_arg_t* */
-#define ST7789_CMD_SET_BACKLIGHT 5  /* arg: int* — brightness */
-#define ST7789_CMD_WRITE_RAM     6  /* arg: st7789_write_ram_arg_t* */
-
-/* ── ioctl 参数结构 ── */
-typedef struct {
-    int x, y, w, h;
-    uint16_t color;
-} st7789_fill_rect_arg_t;
-
-typedef struct {
-    int x, y, w, h;
-    const uint8_t* data;
-} st7789_draw_bitmap_arg_t;
-
-typedef struct {
-    int x, y, w, h;
-    const uint16_t* pixels;
-} st7789_write_ram_arg_t;
-
-#ifdef __cplusplus
-}
-#endif
+/*
+ * st7789 驱动公共接口已迁移至 display.h 强类型子系统 API.
+ *
+ * 替换对照:
+ *   ST7789_CMD_FILL_RECT    → display_fill_rect()
+ *   ST7789_CMD_FILL_SCREEN  → display_fill_screen()
+ *   ST7789_CMD_DRAW_BITMAP  → display_draw_bitmap()
+ *   ST7789_CMD_WRITE_RAM    → display_write_ram()
+ *   ST7789_CMD_SET_BACKLIGHT → display_set_backlight()
+ *   ST7789_CMD_GET_INFO     → display_get_info()
+ *
+ * 所有操作携带显式 timeout_ms, 不再通过 ioctl void* 传递.
+ */
 
 #endif /* ST7789_DRIVER_H */

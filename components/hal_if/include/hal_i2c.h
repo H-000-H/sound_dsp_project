@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+struct device_instance;
+typedef struct device_instance device_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -25,11 +28,24 @@ struct hal_i2c_bus
     int (*write_read)(hal_i2c_bus_t* bus, uint8_t addr,
                       const uint8_t* wdata, size_t wlen,
                       uint8_t* rdata, size_t rlen, uint32_t time_out);
+    int (*bus_recover)(hal_i2c_bus_t* bus);
     int (*deinit)(hal_i2c_bus_t* bus);
     void* _impl;
 };
 
 void hal_i2c_init_struct(hal_i2c_bus_t* bus);
+
+/* ── 强类型 I2C 总线访问 (替代 ioctl, MISRA C Rule 11.3 合规) ──
+ * 从已 probe 的 I2C device_t 中提取 hal_i2c_bus_t*, 直接调用结构体方法.
+ * 返回 NULL 如果设备不是 I2C 总线或未完成 probe.
+ *
+ * 使用方式:
+ *   hal_i2c_bus_t* bus = device_get_i2c_bus(dev);
+ *   if (bus) bus->write(bus, addr, data, len, timeout);
+ */
+hal_i2c_bus_t* device_get_i2c_bus(device_t* dev);
+
+/* ── 以下为 ioctl 兼容层 (DEPRECATED, 新代码请使用上述强类型 API) ── */
 
 #define I2C_CMD_INIT        0x20
 #define I2C_CMD_WRITE       0x21

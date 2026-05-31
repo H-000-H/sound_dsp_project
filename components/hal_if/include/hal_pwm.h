@@ -25,6 +25,8 @@ struct hal_pwm_channel
 
 void hal_pwm_init_struct(hal_pwm_channel_t* pwm);
 
+void hal_pwm_force_stop_all(void);
+
 #ifdef __cplusplus
 }
 #endif

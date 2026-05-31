@@ -167,11 +167,23 @@
             compatible = "gl5528,photoresistor";
             criticality = "ignore";
             depends_on = <&adc0>;
+            adc = <&adc0>;
             adc_pin = <1>;
             adc_channel = <0>;
             adc_atten = <3>;  // 11dB attenuation (0~3.9V范围)
             sample_interval_ms = <100>;
             status = "okay";
+        };
+    };
+
+    safety {
+        safety_hw: safety-hw {
+            compatible = "board,safety-hw";
+            criticality = "fatal";
+            pin_0 = <15>;
+            safe_level_0 = <0>;
+            pin_1 = <16>;
+            safe_level_1 = <0>;
         };
     };
 };

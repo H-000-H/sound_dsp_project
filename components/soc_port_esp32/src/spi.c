@@ -4,6 +4,7 @@
 #include "osal.h"
 #include "VFS.h"
 #include <string.h>
+#include "board_config.h"
 
 static const char* kTag = "hal_spi_bus";
 #define SPI_LOCK_TIMEOUT_MS OSAL_LOCK_TIMEOUT_DEFAULT_MS
@@ -13,6 +14,7 @@ typedef struct {
     spi_device_handle_t dev;
     size_t max_transfer_sz;
     osal_mutex_t* lock;
+    int pool_idx;
 } hal_spi_impl_t;
 
 static spi_host_device_t spi_host_from_id(int host_id)
@@ -22,9 +24,8 @@ static spi_host_device_t spi_host_from_id(int host_id)
 }
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
-#define SPI_IMPL_POOL_SIZE 2
-static hal_spi_impl_t s_spi_pool[SPI_IMPL_POOL_SIZE];
-static uint8_t s_spi_used[SPI_IMPL_POOL_SIZE];
+static hal_spi_impl_t s_spi_pool[SPI_COUNT];
+static uint8_t s_spi_used[SPI_COUNT];
 
 static int spi_init_impl(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg,
                          const hal_spi_device_config_t* dev_cfg)
@@ -34,13 +35,14 @@ static int spi_init_impl(hal_spi_bus_t* bus, const hal_spi_bus_config_t* bus_cfg
         return -1;
     }
 
-    int impl_idx = osal_pool_claim(s_spi_used, SPI_IMPL_POOL_SIZE);
+    int impl_idx = osal_pool_claim(s_spi_used, SPI_COUNT);
     if (impl_idx < 0) {
         DRV_LOGE(kTag, "impl pool exhausted");
         return VFS_ERR_NOMEM;
     }
     hal_spi_impl_t* impl = &s_spi_pool[impl_idx];
     memset(impl, 0, sizeof(*impl));
+    impl->pool_idx = impl_idx;
 
     int ret = 0;
     impl->host = spi_host_from_id(bus_cfg->host_id);
@@ -89,7 +91,7 @@ err_bus:
 err_mutex:
     osal_mutex_destroy(impl->lock);
 err_pool:
-    osal_pool_release(s_spi_used, SPI_IMPL_POOL_SIZE, impl_idx);
+    osal_pool_release(s_spi_used, SPI_COUNT, impl_idx);
     return ret;
 }
 
@@ -152,7 +154,7 @@ static int spi_deinit_impl(hal_spi_bus_t* bus)
     spi_bus_remove_device(impl->dev);
     spi_bus_free(impl->host);
     osal_mutex_destroy(impl->lock);
-    for (int i = 0; i < SPI_IMPL_POOL_SIZE; i++) { if (&s_spi_pool[i] == impl) { osal_pool_release(s_spi_used, SPI_IMPL_POOL_SIZE, i); break; } }
+    osal_pool_release(s_spi_used, SPI_COUNT, impl->pool_idx);
     bus->_impl = NULL;
     return 0;
 }
@@ -171,11 +173,11 @@ void hal_spi_bus_init_struct(hal_spi_bus_t* bus)
 
 typedef struct {
     hal_spi_bus_t bus;
+    int pool_idx;
 } spi_priv_t;
 
-#define SPI_PRIV_POOL_SIZE 2
-static spi_priv_t s_spi_priv_pool[SPI_PRIV_POOL_SIZE];
-static uint8_t s_spi_priv_used[SPI_PRIV_POOL_SIZE];
+static spi_priv_t s_spi_priv_pool[SPI_COUNT];
+static uint8_t s_spi_priv_used[SPI_COUNT];
 
 static int spi_fops_write(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms)
 {
@@ -185,14 +187,14 @@ static int spi_fops_write(device_t* dev, const void* buffer, size_t len, uint32_
     return priv->bus.write(&priv->bus, (const uint8_t*)buffer, len);
 }
 
-static int spi_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int spi_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    (void)arg_len;
+    (void)timeout_ms;
     spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
     case SPI_CMD_READ: {
-        if (!arg) return -1;
+        if (arg_len != sizeof(spi_read_arg_t) || !arg) return VFS_ERR_INVAL;
         spi_read_arg_t* a = (spi_read_arg_t*)arg;
         return priv->bus.read(&priv->bus, a->data, a->len);
     }
@@ -226,10 +228,11 @@ static int spi_probe(device_t* dev)
         return -1;
     }
 
-    int pool_idx = osal_pool_claim(s_spi_priv_used, SPI_PRIV_POOL_SIZE);
+    int pool_idx = osal_pool_claim(s_spi_priv_used, SPI_COUNT);
     if (pool_idx < 0) return VFS_ERR_NOMEM;
     spi_priv_t* priv = &s_spi_priv_pool[pool_idx];
     memset(priv, 0, sizeof(*priv));
+    priv->pool_idx = pool_idx;
 
     hal_spi_bus_config_t bus_cfg = {
         .host_id = host,
@@ -253,7 +256,7 @@ static int spi_probe(device_t* dev)
     return 0;
 
 err_pool:
-    osal_pool_release(s_spi_priv_used, SPI_PRIV_POOL_SIZE, pool_idx);
+    osal_pool_release(s_spi_priv_used, SPI_COUNT, pool_idx);
     return ret;
 }
 
@@ -262,10 +265,8 @@ static int spi_remove(device_t* dev)
     spi_priv_t* priv = (spi_priv_t*)device_get_priv(dev);
     if (priv) {
         priv->bus.deinit(&priv->bus);
-        for (int i = 0; i < SPI_PRIV_POOL_SIZE; i++) { if (&s_spi_priv_pool[i] == priv) { osal_pool_release(s_spi_priv_used, SPI_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        osal_pool_release(s_spi_priv_used, SPI_COUNT, priv->pool_idx);
+        device_ops_unregister(dev);
     }
     return 0;
 }
-
-DRIVER_REGISTER(spi, "esp32,spi-bus", spi_probe, spi_remove);

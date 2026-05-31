@@ -5,6 +5,7 @@
 #include "vfs_gpio.h"
 #include "osal.h"
 #include <string.h>
+#include "board_config.h"
 
 static const char* kTag = "max98357a";
 
@@ -13,16 +14,16 @@ typedef struct
     device_t* gpio_dev;
     int sdn_pin;
     int active_level;
+    int pool_idx;
 } max98357a_priv_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
-#define MAX98357A_PRIV_POOL_SIZE 2
-static max98357a_priv_t s_max98357a_pool[MAX98357A_PRIV_POOL_SIZE];
-static uint8_t s_max98357a_used[MAX98357A_PRIV_POOL_SIZE];
+static max98357a_priv_t s_max98357a_pool[MAX98357A_COUNT];
+static uint8_t s_max98357a_used[MAX98357A_COUNT];
 
 /* ── VFS 操作表 ── */
 static int max98357a_init(device_t* dev);
-static int max98357a_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
+static int max98357a_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms);
 static int max98357a_suspend(device_t* dev);
 static int max98357a_resume(device_t* dev);
 static const file_operation_t max98357a_fops = {
@@ -40,6 +41,7 @@ static int max98357a_probe(device_t* dev)
 
     int ret = 0;
     max98357a_priv_t* priv = NULL;
+    int pool_idx = -1;
 
     if (sdn_pin < 0) {
         DRV_LOGE(kTag, "missing sdn_pin");
@@ -47,29 +49,30 @@ static int max98357a_probe(device_t* dev)
         goto err_pool;
     }
 
-    int pool_idx = osal_pool_claim(s_max98357a_used, MAX98357A_PRIV_POOL_SIZE);
+    pool_idx = osal_pool_claim(s_max98357a_used, MAX98357A_COUNT);
     if (pool_idx < 0) {
         ret = VFS_ERR_NOMEM;
         goto err_pool;
     }
     priv = &s_max98357a_pool[pool_idx];
     memset(priv, 0, sizeof(*priv));
+    priv->pool_idx = pool_idx;
     priv->gpio_dev = device_get_phandle_dev(dev, "gpio");
     if (!priv->gpio_dev) {
-        ret = VFS_ERR_IO;
+        ret = VFS_ERR_DEFER;
         goto err_pool;
     }
     priv->sdn_pin = sdn_pin;
     priv->active_level = active;
 
     hal_gpio_config_t cfg = { .pin = sdn_pin, .mode = HAL_GPIO_MODE_OUTPUT };
-    ret = device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &cfg, sizeof(cfg));
+    ret = device_ioctl(priv->gpio_dev, GPIO_CMD_CONFIG, &cfg, sizeof(cfg), 100);
     if (ret != 0) {
         goto err_pool;
     }
 
     gpio_level_arg_t level = { .pin = sdn_pin, .level = active };
-    ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level));
+    ret = device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level), 100);
     if (ret != 0) {
         goto err_pool;
     }
@@ -80,9 +83,7 @@ static int max98357a_probe(device_t* dev)
     return 0;
 
 err_pool:
-    if (priv) {
-        for (int i = 0; i < MAX98357A_PRIV_POOL_SIZE; i++) { if (&s_max98357a_pool[i] == priv) { osal_pool_release(s_max98357a_used, MAX98357A_PRIV_POOL_SIZE, i); break; } }
-    }
+    if (pool_idx >= 0) osal_pool_release(s_max98357a_used, MAX98357A_COUNT, pool_idx);
     return ret;
 }
 
@@ -91,9 +92,9 @@ static int max98357a_remove(device_t* dev)
     max98357a_priv_t* priv = (max98357a_priv_t*)device_get_priv(dev);
     if (priv) {
         gpio_level_arg_t level = { .pin = priv->sdn_pin, .level = !priv->active_level };
-        device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level));
-        for (int i = 0; i < MAX98357A_PRIV_POOL_SIZE; i++) { if (&s_max98357a_pool[i] == priv) { osal_pool_release(s_max98357a_used, MAX98357A_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &level, sizeof(level), 100);
+        osal_pool_release(s_max98357a_used, MAX98357A_COUNT, priv->pool_idx);
+        device_ops_unregister(dev);
     }
     return 0;
 }
@@ -114,7 +115,7 @@ static int max98357a_set_enable(device_t* dev, int enable)
 
     int level = enable ? priv->active_level : !priv->active_level;
     gpio_level_arg_t arg = { .pin = priv->sdn_pin, .level = level };
-    return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &arg, sizeof(arg));
+    return device_ioctl(priv->gpio_dev, GPIO_CMD_SET_LEVEL, &arg, sizeof(arg), 100);
 }
 
 static int max98357a_suspend(device_t* dev)
@@ -131,11 +132,12 @@ static int max98357a_resume(device_t* dev)
     return max98357a_set_enable(dev, 1);
 }
 
-static int max98357a_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int max98357a_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
+    (void)timeout_ms;
     switch (cmd) {
     case MAX98357A_CMD_SET_ENABLE:
-        if (!arg) return VFS_ERR_INVAL;
+        if (arg_len != sizeof(int) || !arg) return VFS_ERR_INVAL;
         return max98357a_set_enable(dev, *(int*)arg);
     default:
         return VFS_ERR_INVAL;

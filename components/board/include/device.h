@@ -41,6 +41,7 @@ typedef enum {
 
 /* ── 前向声明 ── */
 typedef struct device_instance device_t;
+/* 子系统操作表由驱动通过 priv_data 魔术头注入, 不在 device_t 中硬编码 */
 
 /* ── 编译期只读设备树节点 ── */
 typedef struct device_node
@@ -66,7 +67,7 @@ typedef struct file_operation
     int (*close)(device_t* dev);
     int (*write)(device_t* dev, const void* buffer, size_t len, uint32_t timeout_ms);
     int (*read) (device_t* dev, void* buffer, size_t len, uint32_t timeout_ms);
-    int (*ioctl)(device_t* dev, int cmd, void* arg, size_t arg_len);
+    int (*ioctl)(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms);
     int (*suspend)(device_t* dev);
     int (*resume)(device_t* dev);
 } file_operation_t;
@@ -76,9 +77,10 @@ typedef struct device_instance
 {
     const device_node_t*   node;       /* 指向编译期节点 */
     device_status_t        status;     /* 运行时状态 */
-    void*                  priv_data;  /* 驱动私有数据 */
+    void*                  priv_data;  /* 驱动私有数据 (VFS 层) */
+    void*                  subsys_priv;/* 子系统私有数据 (sensor_if/display_if 魔术头, 零偏移假设, MISRA 11.3 合规) */
     const file_operation_t* ops;       /* 操作函数表 */
-    struct osal_mutex*     lock;       /*  per-device mutex (lazy init, 首次 lock 时创建) */
+    struct osal_mutex*     lock;       /* per-device mutex (device_tree_init 中编译期静态分配) */
     void*                  platform_data; /* board 层注入的静态数据, probe 前设置 */
 } device_t;
 
@@ -107,6 +109,10 @@ int device_set_status(device_t* dev, device_status_t status);
 int device_set_priv(device_t* dev, void* priv);
 void* device_get_priv(const device_t* dev);
 
+/* ── 子系统私有数据 (MISRA C 2012 Rule 11.3 合规, 替代隐式偏移继承) ── */
+int device_set_subsys_priv(device_t* dev, void* subsys_priv);
+void* device_get_subsys_priv(const device_t* dev);
+
 /* ── 设备遍历 ── */
 device_t* device_get_first(void);
 device_t* device_get_next(const device_t* prev);
@@ -115,16 +121,25 @@ int device_get_count(void);
 /* ── 设备树加载 ── */
 int device_tree_init(void);
 
-/* ── 设备锁（首次 lock 时 lazy 创建 mutex） ── */
+/* ── 设备锁（device_tree_init 中已完成全量静态分配） ── */
 int device_lock(device_t* dev);
 int device_unlock(device_t* dev);
 
-/* ── VFS 便捷包装（内部自动抓锁, 空指针安全, 调用 dev->ops） ── */
+/* ── 驱动卸载清理 ──
+ * 清除 dev->priv_data + dev->ops, 切断幽灵指针链.
+ * 由 driver remove 函数在最后调用, 替代手写 device_set_priv(dev,NULL)+dev->ops=NULL.
+ */
+void device_ops_unregister(device_t* dev);
+
+/* ── VFS 便捷包装（框架层自动持锁, IEC 61508 §7.4.3.1） ──
+ * device_open/close/suspend/resume + device_write/read/ioctl 均在持锁状态下
+ * 完成状态检查与 ops 调用, 确保 check-then-act 的原子性.
+ */
 int device_open(device_t* dev, void* arg);
 int device_close(device_t* dev);
 int device_write(device_t* dev, const void* buf, size_t len, uint32_t timeout_ms);
 int device_read(device_t* dev, void* buf, size_t len, uint32_t timeout_ms);
-int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len);
+int device_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms);
 int device_suspend(device_t* dev);
 int device_resume(device_t* dev);
 

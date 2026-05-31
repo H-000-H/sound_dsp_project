@@ -2,9 +2,10 @@
 #include "esp_heap_caps.h"
 
 #include "device.h"
+#include "display.h"
 #include "gpio_key_driver.h"
 #include "key_input.hpp"
-#include "st7789_driver.h"
+#include "event_bus.hpp"
 
 #include "ui/screen/inc/status_bar.hpp"
 #include "ui/screen/inc/lock_screen.hpp"
@@ -25,17 +26,22 @@ void lvgl_defer(void (*fn)(void*), void* arg)
 
 static device_t* s_lcd_dev = nullptr;
 
+static void on_device_removed(const Event& event, void* user_data)
+{
+    (void)user_data;
+    if (s_lcd_dev && (device_t*)event.arg == s_lcd_dev) {
+        s_lcd_dev = nullptr;
+    }
+}
+
 static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
 {
-    if (s_lcd_dev)
+    if (s_lcd_dev && device_get_status(s_lcd_dev) == DEVICE_STATUS_RUNNING)
     {
         int w = area->x2 - area->x1 + 1;
         int h = area->y2 - area->y1 + 1;
-        st7789_write_ram_arg_t arg = {
-            .x = area->x1, .y = area->y1, .w = w, .h = h,
-            .pixels = (const uint16_t*)px_map
-        };
-        device_ioctl(s_lcd_dev, ST7789_CMD_WRITE_RAM, &arg, sizeof(arg));
+        display_write_ram(s_lcd_dev, area->x1, area->y1, w, h,
+                          (const uint16_t*)px_map, 1000);
     }
     lv_disp_flush_ready(disp);
 }
@@ -215,7 +221,10 @@ void lvgl_main()
 {
     /* ── 查找显示设备并初始化 ── */
     s_lcd_dev = device_find("lcd0");
-    if (s_lcd_dev) device_open(s_lcd_dev, NULL);
+    if (s_lcd_dev) {
+        device_open(s_lcd_dev, NULL);
+        EventBus::getInstance().subscribe(SystemEvent::DeviceRemoved, on_device_removed);
+    }
 
     /* ── 初始化按键映射 ── */
     key_map_init();

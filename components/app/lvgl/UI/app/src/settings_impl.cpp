@@ -1,5 +1,5 @@
 #include "settings_app.hpp"
-#include "st7789_driver.h"
+#include "display.h"
 #include "device.h"
 #include "thingscloud_app.hpp"
 #include "mqtt_client.hpp"
@@ -42,11 +42,10 @@ void SettingsImpl::on_mqtt_toggle(bool on)
 
 void SettingsImpl::on_brightness(int val)
 {
-    /* 通过 ST7789 驱动调节背光 (驱动内部调 PWM 或 GPIO) */
     device_t* lcd = device_find("lcd0");
-    if (lcd) {
+    if (lcd && device_get_status(lcd) == DEVICE_STATUS_RUNNING) {
         uint8_t brightness = (uint8_t)(val * 255 / 100);
-        device_ioctl(lcd, ST7789_CMD_SET_BACKLIGHT, &brightness, sizeof(brightness));
+        display_set_backlight(lcd, brightness);
     }
 }
 

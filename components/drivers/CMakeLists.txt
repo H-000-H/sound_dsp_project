@@ -14,6 +14,9 @@ idf_component_register(
         "sensor/inc"
     REQUIRES
         board
+        driver
         osal
         hal_if
+        display_if
+        sensor_if
 )

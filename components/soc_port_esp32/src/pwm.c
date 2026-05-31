@@ -10,6 +10,7 @@ static const char* kTag = "hal_pwm";
 typedef struct {
     ledc_channel_t channel;
     ledc_mode_t speed_mode;
+    int pool_idx;
 } hal_pwm_impl_t;
 
 /* ── BSS 静态池（禁止运行时动态分配） ── */
@@ -30,6 +31,7 @@ static int pwm_init_impl(hal_pwm_channel_t* pwm, int pin, int freq_hz, int resol
     }
     hal_pwm_impl_t* impl = &s_pwm_pool[pool_idx];
     memset(impl, 0, sizeof(*impl));
+    impl->pool_idx = pool_idx;
 
     int ret = 0;
     static int next_timer = 0;
@@ -113,7 +115,7 @@ static int pwm_deinit_impl(hal_pwm_channel_t* pwm)
 
     hal_pwm_impl_t* impl = (hal_pwm_impl_t*)pwm->_impl;
     ledc_stop(impl->speed_mode, impl->channel, 0);
-    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) { if (&s_pwm_pool[i] == impl) { osal_pool_release(s_pwm_used, PWM_IMPL_POOL_SIZE, i); break; } }
+    osal_pool_release(s_pwm_used, PWM_IMPL_POOL_SIZE, impl->pool_idx);
     pwm->_impl = NULL;
     return 0;
 }
@@ -129,3 +131,13 @@ void hal_pwm_init_struct(hal_pwm_channel_t* pwm)
 }
 
 /* pwm_bl (PWM backlight) 已移至 components/drivers/display/pwm_backlight.c */
+
+void hal_pwm_force_stop_all(void)
+{
+    for (int i = 0; i < PWM_IMPL_POOL_SIZE; i++) {
+        if (s_pwm_used[i]) {
+            hal_pwm_impl_t* impl = &s_pwm_pool[i];
+            ledc_stop(impl->speed_mode, impl->channel, 0);
+        }
+    }
+}

@@ -183,9 +183,9 @@ typedef struct {
 static rmt_led_priv_t s_rmt_led_priv_pool[RMT_LED_PRIV_POOL_SIZE];
 static uint8_t s_rmt_led_priv_used[RMT_LED_PRIV_POOL_SIZE];
 
-static int rmt_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len)
+static int rmt_fops_ioctl(device_t* dev, int cmd, void* arg, size_t arg_len, uint32_t timeout_ms)
 {
-    (void)arg_len;
+    (void)arg_len; (void)timeout_ms;
     rmt_led_priv_t* priv = (rmt_led_priv_t*)device_get_priv(dev);
     if (!priv) return -1;
     switch (cmd) {
@@ -278,9 +278,7 @@ static int rmt_led_remove(device_t* dev)
             priv->led.deinit(&priv->led);
         }
         for (int i = 0; i < RMT_LED_PRIV_POOL_SIZE; i++) { if (&s_rmt_led_priv_pool[i] == priv) { osal_pool_release(s_rmt_led_priv_used, RMT_LED_PRIV_POOL_SIZE, i); break; } }
-        device_set_priv(dev, NULL);
+        device_ops_unregister(dev);
     }
     return 0;
 }
-
-DRIVER_REGISTER(rmt_led, "esp32,rmt-tx", rmt_led_probe, rmt_led_remove);

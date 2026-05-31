@@ -11,5 +11,8 @@
 #define VFS_ERR_BUSY  -4  /* 设备忙 */
 #define VFS_ERR_AGAIN -5  /* 重试 */
 #define VFS_ERR_NOSPC -6  /* 无剩余空间/通道 */
+#define VFS_ERR_TIMEOUT -7  /* 锁获取/操作超时 */
+#define VFS_ERR_HW_FATAL -8  /* 硬件物理故障, 不可恢复 (短路/断路) */
+#define VFS_ERR_DEFER   -9  /* 依赖未就绪, 稍后重试 (EPROBE_DEFER) */
 
 #endif /* VFS_H */

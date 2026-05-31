@@ -8,6 +8,7 @@ idf_component_register(
         "src/rmt_led.c"
         "src/i2s_bus.c"
         "src/adc.c"
+        "src/hal_cpu.c"
     PRIV_REQUIRES
         board
         hal_if
